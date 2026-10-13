@@ -75,6 +75,29 @@ class TestVbaGrep(unittest.TestCase):
             ],
         )
 
+    def test_grep_skips_strings_and_comments(self):
+        modules = [
+            (
+                "Module1",
+                'MsgBox "Please Protect the sheet"\r\n'
+                "x = 1 ' Protect later\r\n"
+                "Rem\tProtect\r\n"
+                "y = 2: Rem Protect\r\n"
+                "' Comment going on _\r\n"
+                "    over Protect\r\n"
+                '    ActiveSheet.Protect Password:="it\'s"\r\n'
+                's = "a""b": Sheets(1).Protect\r\n',
+            ),
+        ]
+
+        self.assertEqual(
+            grep_vba_modules(modules),
+            [
+                VbaMatch("Module1", 7, 'ActiveSheet.Protect Password:="it\'s"'),
+                VbaMatch("Module1", 8, 's = "a""b": Sheets(1).Protect'),
+            ],
+        )
+
     def test_cyclic_fat_chain(self):
         with ZipFile(self.input_file, "r") as z:
             data = bytearray(z.read("xl/vbaProject.bin"))

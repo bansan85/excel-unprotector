@@ -11,6 +11,12 @@ END_OF_CHAIN = 0xFFFFFFFA
 # Protect in a sheet module) but neither Unprotect nor ProtectContents.
 PROTECT_PATTERN = re.compile(r"(?<!\w)Protect\b", re.IGNORECASE)
 
+# A string literal (an escaped "" reads as two adjacent literals) or a
+# comment: ' anywhere outside a string, Rem at the start of a statement.
+STRING_OR_COMMENT = re.compile(
+    r'"[^"]*"?|\'.*|(?:^|(?<=:))\s*Rem\b.*', re.IGNORECASE
+)
+
 
 @dataclass(frozen=True)
 class VbaMatch:
@@ -167,16 +173,37 @@ def extract_vba_modules(vba_project: bytes) -> list[tuple[str, str]]:
     return modules
 
 
+def _split_comment(line: str) -> tuple[str, str | None]:
+    # Returns the code with string literals emptied, and the comment if any
+    comment = None
+
+    def replace(match: re.Match) -> str:
+        nonlocal comment
+        if match.group(0).startswith('"'):
+            return '""'
+        comment = match.group(0)
+        return ""
+
+    return STRING_OR_COMMENT.sub(replace, line), comment
+
+
 def grep_vba_modules(
     modules: list[tuple[str, str]], pattern: re.Pattern = PROTECT_PATTERN
 ) -> list[VbaMatch]:
     matches: list[VbaMatch] = []
     for module_name, source in modules:
+        in_comment = False
         for line_number, line in enumerate(source.splitlines(), 1):
             code = line.strip()
-            if code.startswith("'") or code.upper().startswith("REM "):
-                continue
-            if pattern.search(code):
+            if in_comment:
+                searched, comment = "", code
+            else:
+                searched, comment = _split_comment(code)
+            # A comment ending with " _" goes on over the next line
+            in_comment = comment is not None and (
+                comment == "_" or comment.endswith(" _")
+            )
+            if pattern.search(searched):
                 matches.append(VbaMatch(module_name, line_number, code))
     return matches
 
