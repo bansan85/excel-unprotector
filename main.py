@@ -18,9 +18,6 @@ def main():
     if not os.path.exists(args.input_file):
         print(f"Error: '{args.input_file}' is missing.")
         sys.exit(1)
-    if not os.path.exists(args.output_file):
-        print(f"Error: '{args.output_file}' is missing.")
-        sys.exit(1)
 
     try:
         protect_calls = unprotect_xlsx(args.input_file, args.output_file)
