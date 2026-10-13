@@ -6,6 +6,10 @@ import re
 import warnings
 from core.vba_grep import VbaMatch, find_protect_calls
 
+# A start or empty-element tag. Text content cannot contain "<" unescaped, so
+# this never matches inside a cell value or a shared string.
+TAG_PATTERN = re.compile(r"<[A-Za-z_][^\"'>]*(?:(?:\"[^\"]*\"|'[^']*')[^\"'>]*)*>")
+
 
 def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
     patterns_to_remove = [
@@ -20,6 +24,12 @@ def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
         r'\s+applyProtection="[^"]*"',
         r'\s+state="hidden"',
     ]
+
+    def remove_attrs(tag: re.Match) -> str:
+        text = tag.group(0)
+        for attr_pattern in attrs_to_remove:
+            text = re.sub(attr_pattern, "", text)
+        return text
 
     # Opening the output for writing would truncate the input while it is
     # read. samefile compares the files themselves, so a path differing only
@@ -41,8 +51,7 @@ def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
                     for pattern in patterns_to_remove:
                         text = re.sub(pattern, "", text, flags=re.DOTALL)
 
-                    for attr_pattern in attrs_to_remove:
-                        text = re.sub(attr_pattern, "", text)
+                    text = TAG_PATTERN.sub(remove_attrs, text)
 
                     zout.writestr(item.filename, text.encode("utf-8"))
 

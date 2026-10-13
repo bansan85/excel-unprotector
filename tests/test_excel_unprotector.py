@@ -59,6 +59,28 @@ class TestExcelUnprotect(unittest.TestCase):
             )
         )
 
+    def test_keeps_text_content(self):
+        xml = (
+            '<workbook><bookViews><workbookView windowProtection="1"/>'
+            '</bookViews><sheets><sheet name="a" state="hidden"/></sheets>'
+            '<t>x state="hidden" applyProtection="1" y</t></workbook>'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            with ZipFile(input_file, "w") as z:
+                z.writestr("xl/workbook.xml", xml)
+
+            unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(
+                    z.read("xl/workbook.xml").decode(),
+                    "<workbook><bookViews><workbookView/></bookViews>"
+                    '<sheets><sheet name="a"/></sheets>'
+                    '<t>x state="hidden" applyProtection="1" y</t></workbook>',
+                )
+
     def assert_refuses_same_file(self, input_file: str, output_file: str):
         original = pathlib.Path(input_file).read_bytes()
         with self.assertRaises(ValueError):
