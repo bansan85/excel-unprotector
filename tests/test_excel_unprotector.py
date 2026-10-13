@@ -47,7 +47,7 @@ class TestExcelUnprotect(unittest.TestCase):
         return True
 
     def test_integrity(self):
-        unprotect_xlsx(self.input_file, self.output_file)
+        self.assertEqual(unprotect_xlsx(self.input_file, self.output_file), [])
 
         self.assertFalse(self.compare_xlsx_content(self.input_file, self.output_file))
         self.assertTrue(

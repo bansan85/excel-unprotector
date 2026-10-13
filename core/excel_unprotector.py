@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import zipfile
 import re
+import warnings
+from core.vba_grep import VbaMatch, find_protect_calls
 
 
-def unprotect_xlsx(input_path: str, output_path: str):
+def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
     patterns_to_remove = [
         r"<sheetProtection[^>]*/>",
         r"<workbookProtection[^>]*/>",
@@ -40,3 +44,10 @@ def unprotect_xlsx(input_path: str, output_path: str):
 
                 else:
                     zout.writestr(item.filename, content)
+
+    # The conversion is done: a macro that cannot be parsed must not fail it.
+    try:
+        return find_protect_calls(output_path)
+    except Exception as e:
+        warnings.warn(f"Unable to scan VBA macros for Protect calls: {e}")
+        return []

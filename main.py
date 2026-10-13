@@ -23,10 +23,19 @@ def main():
         sys.exit(1)
 
     try:
-        unprotect_xlsx(args.input_file, args.output_file)
+        protect_calls = unprotect_xlsx(args.input_file, args.output_file)
     except Exception as e:
         print(f"Unexpected exception: {e}")
         sys.exit(1)
+
+    if protect_calls:
+        print(
+            "Warning: VBA macros call Protect and may protect the workbook "
+            "again when they run. Remove these lines (the password is often "
+            "written in them):"
+        )
+        for call in protect_calls:
+            print(f"  {call.module}:{call.line_number}: {call.line}")
 
 
 if __name__ == "__main__":
