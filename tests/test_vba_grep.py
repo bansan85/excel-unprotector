@@ -92,6 +92,24 @@ class TestVbaGrep(unittest.TestCase):
         with self.assertRaises(ValueError):
             CompoundFile(bytes(data))
 
+    def test_ignores_size_high_bits_in_version_3(self):
+        with ZipFile(self.input_file, "r") as z:
+            data = bytearray(z.read("xl/vbaProject.bin"))
+        self.assertEqual(struct.unpack_from("<H", data, 0x1A)[0], 3)
+        cfb = CompoundFile(bytes(data))
+        sector = struct.unpack_from("<I", data, 0x30)[0]
+        # Fill the high 32 bits of every directory entry's stream size
+        while sector < 0xFFFFFFFA:
+            for entry in range(cfb.sector_size // 128):
+                offset = (sector + 1) * cfb.sector_size + entry * 128
+                struct.pack_into("<I", data, offset + 124, 0xDEADBEEF)
+            sector = cfb.fat[sector]
+
+        self.assertEqual(
+            extract_vba_modules(bytes(data)),
+            extract_vba_modules(bytes(cfb.data)),
+        )
+
     def test_find_protect_calls(self):
         self.assertEqual(find_protect_calls(self.input_file), [])
 

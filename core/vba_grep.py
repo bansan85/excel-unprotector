@@ -71,6 +71,7 @@ class CompoundFile:
     # Minimal [MS-CFB] reader: only what is needed to read streams by name
     def __init__(self, data: bytes):
         self.data = data
+        major_version = struct.unpack_from("<H", data, 0x1A)[0]
         self.sector_size = 1 << struct.unpack_from("<H", data, 0x1E)[0]
         self.mini_sector_size = 1 << struct.unpack_from("<H", data, 0x20)[0]
         dir_start = struct.unpack_from("<I", data, 0x30)[0]
@@ -109,6 +110,9 @@ class CompoundFile:
             name = entry[: max(name_len - 2, 0)].decode("utf-16-le")
             entry_type = entry[66]
             start, size = struct.unpack_from("<IQ", entry, 116)
+            if major_version == 3:
+                # [MS-CFB] 2.6.3: old writers left garbage in the high 32 bits
+                size &= 0xFFFFFFFF
             if entry_type == 5:
                 root = (start, size)
             elif entry_type == 2:
