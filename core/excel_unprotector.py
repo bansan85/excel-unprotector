@@ -11,9 +11,9 @@ def unprotect_xlsx(input_path: str, output_path: str):
     ]
 
     attrs_to_remove = [
-        r'\s?windowProtection="[^"]*"',
-        r'\s?applyProtection="[^"]*"',
-        r'\s?state="hidden"',
+        r'\s+windowProtection="[^"]*"',
+        r'\s+applyProtection="[^"]*"',
+        r'\s+state="hidden"',
     ]
 
     with zipfile.ZipFile(input_path, "r") as zin:
@@ -31,8 +31,6 @@ def unprotect_xlsx(input_path: str, output_path: str):
 
                     for attr_pattern in attrs_to_remove:
                         text = re.sub(attr_pattern, "", text)
-
-                    text = re.sub(r"\s{2,}>", ">", text)
 
                     zout.writestr(item.filename, text.encode("utf-8"))
 
