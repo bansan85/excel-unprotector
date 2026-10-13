@@ -12,6 +12,18 @@ from core.vba_grep import (
 )
 
 
+def directory_entry_offsets(data: bytes) -> list[int]:
+    # File offset of each 128-byte compound file directory entry
+    cfb = CompoundFile(data)
+    offsets: list[int] = []
+    sector = struct.unpack_from("<I", data, 0x30)[0]
+    while sector < 0xFFFFFFFA:
+        for entry in range(cfb.sector_size // 128):
+            offsets.append((sector + 1) * cfb.sector_size + entry * 128)
+        sector = cfb.fat[sector]
+    return offsets
+
+
 class TestVbaGrep(unittest.TestCase):
     def setUp(self):
         self.current_folder = pathlib.Path(__file__).parent.resolve()
@@ -119,18 +131,34 @@ class TestVbaGrep(unittest.TestCase):
         with ZipFile(self.input_file, "r") as z:
             data = bytearray(z.read("xl/vbaProject.bin"))
         self.assertEqual(struct.unpack_from("<H", data, 0x1A)[0], 3)
-        cfb = CompoundFile(bytes(data))
-        sector = struct.unpack_from("<I", data, 0x30)[0]
+        original = bytes(data)
         # Fill the high 32 bits of every directory entry's stream size
-        while sector < 0xFFFFFFFA:
-            for entry in range(cfb.sector_size // 128):
-                offset = (sector + 1) * cfb.sector_size + entry * 128
-                struct.pack_into("<I", data, offset + 124, 0xDEADBEEF)
-            sector = cfb.fat[sector]
+        for offset in directory_entry_offsets(original):
+            struct.pack_into("<I", data, offset + 124, 0xDEADBEEF)
 
         self.assertEqual(
-            extract_vba_modules(bytes(data)),
-            extract_vba_modules(bytes(cfb.data)),
+            extract_vba_modules(bytes(data)), extract_vba_modules(original)
+        )
+
+    def test_same_stream_name_in_other_storage(self):
+        with ZipFile(self.input_file, "r") as z:
+            data = bytearray(z.read("xl/vbaProject.bin"))
+        original = CompoundFile(bytes(data))
+        # Rename VBA/_VBA_PROJECT to VBA/PROJECT, the name of a root stream
+        old_name = "_VBA_PROJECT\0".encode("utf-16-le")
+        new_name = "PROJECT\0".encode("utf-16-le")
+        for offset in directory_entry_offsets(bytes(data)):
+            if data[offset : offset + len(old_name)] == old_name:
+                data[offset : offset + 64] = new_name.ljust(64, b"\0")
+                struct.pack_into("<H", data, offset + 64, len(new_name))
+
+        cfb = CompoundFile(bytes(data))
+        self.assertEqual(cfb.stream("PROJECT"), original.stream("PROJECT"))
+        self.assertEqual(
+            cfb.stream("VBA/PROJECT"), original.stream("VBA/_VBA_PROJECT")
+        )
+        self.assertEqual(
+            extract_vba_modules(bytes(data)), extract_vba_modules(original.data)
         )
 
     def test_find_protect_calls(self):

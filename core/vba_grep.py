@@ -107,23 +107,45 @@ class CompoundFile:
             raw = self._chain(minifat_start)
             self.minifat = list(struct.unpack(f"<{len(raw) // 4}I", raw))
 
-        self.streams: dict[str, tuple[int, int]] = {}
-        root = (END_OF_CHAIN, 0)
+        entries = []
         raw = self._chain(dir_start)
-        for i in range(0, len(raw), 128):
+        for i in range(0, len(raw) - 127, 128):
             entry = raw[i : i + 128]
             name_len = struct.unpack_from("<H", entry, 64)[0]
             name = entry[: max(name_len - 2, 0)].decode("utf-16-le")
             entry_type = entry[66]
+            siblings_and_child = struct.unpack_from("<III", entry, 68)
             start, size = struct.unpack_from("<IQ", entry, 116)
             if major_version == 3:
                 # [MS-CFB] 2.6.3: old writers left garbage in the high 32 bits
                 size &= 0xFFFFFFFF
-            if entry_type == 5:
-                root = (start, size)
+            entries.append((name, entry_type, siblings_and_child, start, size))
+        if not entries or entries[0][1] != 5:
+            raise ValueError("Missing root entry in compound file")
+
+        # Streams are keyed by their path, such as "vba/dir": the same name
+        # can be used in different storages. The entries of a storage form a
+        # tree linked by their left and right sibling indexes.
+        self.streams: dict[str, tuple[int, int]] = {}
+        pending = [(entries[0][2][2], "")]
+        seen: set[int] = set()
+        while pending:
+            index, prefix = pending.pop()
+            if index >= len(entries):  # also NOSTREAM, the empty link
+                continue
+            if index in seen:
+                raise ValueError("Cyclic directory tree in compound file")
+            seen.add(index)
+            name, entry_type, (left, right, child), start, size = entries[index]
+            pending += [(left, prefix), (right, prefix)]
+            path = prefix + name.lower()
+            if entry_type == 1:
+                pending.append((child, path + "/"))
             elif entry_type == 2:
-                self.streams.setdefault(name.lower(), (start, size))
-        self.mini_stream = self._chain(root[0])[: root[1]]
+                self.streams[path] = (start, size)
+
+        _, _, _, root_start, root_size = entries[0]
+        self.mini_stream = self._chain(root_start)[:root_size]
 
     def _sector(self, index: int) -> bytes:
         offset = (index + 1) * self.sector_size
@@ -134,8 +156,9 @@ class CompoundFile:
             self._sector(i) for i in _follow(start, self.fat.__getitem__)
         )
 
-    def stream(self, name: str) -> bytes:
-        start, size = self.streams[name.lower()]
+    def stream(self, path: str) -> bytes:
+        # path names the storages from the root, separated by "/"
+        start, size = self.streams[path.lower()]
         if size >= self.mini_cutoff:
             return self._chain(start)[:size]
         out = bytearray()
@@ -147,7 +170,7 @@ class CompoundFile:
 
 def extract_vba_modules(vba_project: bytes) -> list[tuple[str, str]]:
     cfb = CompoundFile(vba_project)
-    dir_stream = decompress(cfb.stream("dir"))
+    dir_stream = decompress(cfb.stream("VBA/dir"))
     pos = 0
     codepage = 1252
     stream_name = ""
@@ -166,7 +189,7 @@ def extract_vba_modules(vba_project: bytes) -> list[tuple[str, str]]:
             stream_name = record.decode(f"cp{codepage}", errors="replace")
         elif record_id == 0x0031:
             text_offset = struct.unpack_from("<I", record)[0]
-            source = decompress(cfb.stream(stream_name)[text_offset:])
+            source = decompress(cfb.stream(f"VBA/{stream_name}")[text_offset:])
             modules.append(
                 (stream_name, source.decode(f"cp{codepage}", errors="replace"))
             )
