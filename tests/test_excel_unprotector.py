@@ -81,6 +81,35 @@ class TestExcelUnprotect(unittest.TestCase):
                     '<t>x state="hidden" applyProtection="1" y</t></workbook>',
                 )
 
+    def test_removes_prefixed_elements(self):
+        workbook = (
+            '<x:workbook xmlns:x="ns"><x:workbookProtection lockStructure="1"/>'
+            "</x:workbook>"
+        )
+        sheet = (
+            '<x:worksheet xmlns:x="ns"><x:sheetProtection sheet="1"/>'
+            '<x:protectedRanges><x:protectedRange name="r" sqref="A1"/>'
+            "</x:protectedRanges><x:protectedRanges/></x:worksheet>"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            with ZipFile(input_file, "w") as z:
+                z.writestr("xl/workbook.xml", workbook)
+                z.writestr("xl/worksheets/sheet1.xml", sheet)
+
+            unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(
+                    z.read("xl/workbook.xml").decode(),
+                    '<x:workbook xmlns:x="ns"></x:workbook>',
+                )
+                self.assertEqual(
+                    z.read("xl/worksheets/sheet1.xml").decode(),
+                    '<x:worksheet xmlns:x="ns"></x:worksheet>',
+                )
+
     def assert_refuses_same_file(self, input_file: str, output_file: str):
         original = pathlib.Path(input_file).read_bytes()
         with self.assertRaises(ValueError):

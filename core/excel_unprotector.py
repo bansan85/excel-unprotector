@@ -12,11 +12,13 @@ TAG_PATTERN = re.compile(r"<[A-Za-z_][^\"'>]*(?:(?:\"[^\"]*\"|'[^']*')[^\"'>]*)*
 
 
 def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
+    # Some writers put the elements in a prefixed namespace, such as
+    # <x:sheetProtection/>: the closing tag must then carry the same prefix.
     patterns_to_remove = [
-        r"<sheetProtection[^>]*/>",
-        r"<workbookProtection[^>]*/>",
-        r"<protectedRanges[^>]*/>",
-        r"<protectedRanges[^>]*>.*?</protectedRanges>",
+        r"<(?:[\w.-]+:)?sheetProtection[^>]*/>",
+        r"<(?:[\w.-]+:)?workbookProtection[^>]*/>",
+        r"<(?:[\w.-]+:)?protectedRanges[^>]*/>",
+        r"<((?:[\w.-]+:)?)protectedRanges[^>]*>.*?</\1protectedRanges>",
     ]
 
     attrs_to_remove = [
