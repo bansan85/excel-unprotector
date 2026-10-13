@@ -2,6 +2,7 @@ import unittest
 import os
 from core.excel_unprotector import unprotect_xlsx
 from zipfile import ZipFile
+import codecs
 import hashlib
 import pathlib
 import shutil
@@ -109,6 +110,56 @@ class TestExcelUnprotect(unittest.TestCase):
                     z.read("xl/worksheets/sheet1.xml").decode(),
                     '<x:worksheet xmlns:x="ns"></x:worksheet>',
                 )
+
+    def test_keeps_xml_encoding(self):
+        xml = (
+            '<?xml version="1.0" encoding="{}"?>'
+            '<worksheet><sheetProtection sheet="1"/><t>é</t></worksheet>'
+        )
+        expected = '<?xml version="1.0" encoding="{}"?><worksheet><t>é</t></worksheet>'
+        parts = {
+            "utf16le.xml": codecs.BOM_UTF16_LE
+            + xml.format("UTF-16").encode("utf-16-le"),
+            "utf16be.xml": xml.format("UTF-16").encode("utf-16-be"),
+            "latin1.xml": xml.format("ISO-8859-1").encode("latin-1"),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            with ZipFile(input_file, "w") as z:
+                for name, content in parts.items():
+                    z.writestr(name, content)
+
+            unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(
+                    z.read("utf16le.xml"),
+                    codecs.BOM_UTF16_LE
+                    + expected.format("UTF-16").encode("utf-16-le"),
+                )
+                self.assertEqual(
+                    z.read("utf16be.xml"),
+                    expected.format("UTF-16").encode("utf-16-be"),
+                )
+                self.assertEqual(
+                    z.read("latin1.xml"),
+                    expected.format("ISO-8859-1").encode("latin-1"),
+                )
+
+    def test_keeps_undecodable_xml_unchanged(self):
+        content = b'<worksheet><sheetProtection sheet="1"/><t>\xff</t></worksheet>'
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            with ZipFile(input_file, "w") as z:
+                z.writestr("xl/worksheets/sheet1.xml", content)
+
+            with self.assertWarns(UserWarning):
+                unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(z.read("xl/worksheets/sheet1.xml"), content)
 
     def assert_refuses_same_file(self, input_file: str, output_file: str):
         original = pathlib.Path(input_file).read_bytes()

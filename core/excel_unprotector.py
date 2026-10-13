@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import os
 import zipfile
 import re
@@ -9,6 +10,22 @@ from core.vba_grep import VbaMatch, find_protect_calls
 # A start or empty-element tag. Text content cannot contain "<" unescaped, so
 # this never matches inside a cell value or a shared string.
 TAG_PATTERN = re.compile(r"<[A-Za-z_][^\"'>]*(?:(?:\"[^\"]*\"|'[^']*')[^\"'>]*)*>")
+
+ENCODING_PATTERN = re.compile(rb"<\?xml[^>]*encoding=[\"']([A-Za-z0-9._-]+)")
+
+
+def xml_encoding(content: bytes) -> str:
+    # [XML 1.0] appendix F: a byte order mark or the first characters tell
+    # UTF-16 apart; otherwise the declaration names the encoding. A BOM is
+    # decoded as a character and written back as is.
+    if content.startswith((codecs.BOM_UTF16_LE, b"<\x00")):
+        return "utf-16-le"
+    if content.startswith((codecs.BOM_UTF16_BE, b"\x00<")):
+        return "utf-16-be"
+    if content.startswith(codecs.BOM_UTF8):
+        return "utf-8"
+    declaration = ENCODING_PATTERN.match(content)
+    return declaration.group(1).decode("ascii") if declaration else "utf-8"
 
 
 def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
@@ -48,14 +65,20 @@ def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
                 content = zin.read(item.filename)
 
                 if item.filename.endswith(".xml"):
-                    text = content.decode("utf-8", errors="ignore")
+                    encoding = xml_encoding(content)
+                    try:
+                        text = content.decode(encoding)
+                    except (LookupError, UnicodeDecodeError) as e:
+                        warnings.warn(f"{item.filename} left unchanged: {e}")
+                        zout.writestr(item.filename, content)
+                        continue
 
                     for pattern in patterns_to_remove:
                         text = re.sub(pattern, "", text, flags=re.DOTALL)
 
                     text = TAG_PATTERN.sub(remove_attrs, text)
 
-                    zout.writestr(item.filename, text.encode("utf-8"))
+                    zout.writestr(item.filename, text.encode(encoding))
 
                 elif item.filename == "xl/vbaProject.bin":
                     new_content = content.replace(b"DPB=", b"DPX=")
