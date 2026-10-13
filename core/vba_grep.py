@@ -144,8 +144,9 @@ class CompoundFile:
             elif entry_type == 2:
                 self.streams[path] = (start, size)
 
-        _, _, _, root_start, root_size = entries[0]
-        self.mini_stream = self._chain(root_start)[:root_size]
+        # The small streams live in the mini stream, itself stored in the
+        # sectors chained from the root entry
+        self.mini_stream_sectors = _follow(entries[0][3], self.fat.__getitem__)
 
     def _sector(self, index: int) -> bytes:
         offset = (index + 1) * self.sector_size
@@ -156,16 +157,38 @@ class CompoundFile:
             self._sector(i) for i in _follow(start, self.fat.__getitem__)
         )
 
-    def stream(self, path: str) -> bytes:
-        # path names the storages from the root, separated by "/"
+    def stream_spans(self, path: str) -> list[tuple[int, int]]:
+        # The (file offset, length) pieces that make up a stream, in order.
+        # path names the storages from the root, separated by "/".
         start, size = self.streams[path.lower()]
         if size >= self.mini_cutoff:
-            return self._chain(start)[:size]
-        out = bytearray()
-        for i in _follow(start, self.minifat.__getitem__):
-            offset = i * self.mini_sector_size
-            out += self.mini_stream[offset : offset + self.mini_sector_size]
-        return bytes(out[:size])
+            pieces = [
+                ((i + 1) * self.sector_size, self.sector_size)
+                for i in _follow(start, self.fat.__getitem__)
+            ]
+        else:
+            per_sector = self.sector_size // self.mini_sector_size
+            pieces = []
+            for i in _follow(start, self.minifat.__getitem__):
+                sector = self.mini_stream_sectors[i // per_sector]
+                offset = (sector + 1) * self.sector_size
+                offset += (i % per_sector) * self.mini_sector_size
+                pieces.append((offset, self.mini_sector_size))
+
+        spans: list[tuple[int, int]] = []
+        for offset, length in pieces:
+            length = min(length, size)
+            if length <= 0:
+                break
+            spans.append((offset, length))
+            size -= length
+        return spans
+
+    def stream(self, path: str) -> bytes:
+        return b"".join(
+            self.data[offset : offset + length]
+            for offset, length in self.stream_spans(path)
+        )
 
 
 def extract_vba_modules(vba_project: bytes) -> list[tuple[str, str]]:

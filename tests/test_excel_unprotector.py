@@ -1,6 +1,7 @@
 import unittest
 import os
 from core.excel_unprotector import unprotect_xlsx
+from core.vba_grep import CompoundFile
 from zipfile import ZipFile
 import codecs
 import hashlib
@@ -160,6 +161,30 @@ class TestExcelUnprotect(unittest.TestCase):
 
             with ZipFile(output_file, "r") as z:
                 self.assertEqual(z.read("xl/worksheets/sheet1.xml"), content)
+
+    def test_patches_only_project_password(self):
+        with ZipFile(self.input_file, "r") as z:
+            parts = {name: z.read(name) for name in z.namelist()}
+        vba_project = bytearray(parts["xl/vbaProject.bin"])
+        # Write "DPB=" at the start of another stream
+        offset, _ = CompoundFile(bytes(vba_project)).stream_spans("PROJECTwm")[0]
+        vba_project[offset : offset + 4] = b"DPB="
+        parts["xl/vbaProject.bin"] = bytes(vba_project)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsm"
+            output_file = f"{tmp}/out.xlsm"
+            with ZipFile(input_file, "w") as z:
+                for name, content in parts.items():
+                    z.writestr(name, content)
+
+            unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                cfb = CompoundFile(z.read("xl/vbaProject.bin"))
+        self.assertEqual(cfb.stream("PROJECTwm")[:4], b"DPB=")
+        self.assertIn(b"\r\nDPX=", cfb.stream("PROJECT"))
+        self.assertNotIn(b"DPB=", cfb.stream("PROJECT"))
 
     def assert_refuses_same_file(self, input_file: str, output_file: str):
         original = pathlib.Path(input_file).read_bytes()

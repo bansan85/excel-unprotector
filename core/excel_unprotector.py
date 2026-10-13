@@ -5,7 +5,7 @@ import os
 import zipfile
 import re
 import warnings
-from core.vba_grep import VbaMatch, find_protect_calls
+from core.vba_grep import CompoundFile, VbaMatch, find_protect_calls
 
 # A start or empty-element tag. Text content cannot contain "<" unescaped, so
 # this never matches inside a cell value or a shared string.
@@ -26,6 +26,24 @@ def xml_encoding(content: bytes) -> str:
         return "utf-8"
     declaration = ENCODING_PATTERN.match(content)
     return declaration.group(1).decode("ascii") if declaration else "utf-8"
+
+
+def disable_vba_password(vba_project: bytes) -> bytes:
+    # The DPB line of the PROJECT stream holds the VBA project password.
+    # Renaming its key to DPX makes Excel drop the password. Only that line
+    # is touched: the same bytes may appear in any other stream.
+    try:
+        spans = CompoundFile(vba_project).stream_spans("PROJECT")
+    except Exception as e:
+        warnings.warn(f"Unable to read the VBA project, patching it blindly: {e}")
+        return vba_project.replace(b"DPB=", b"DPX=")
+
+    positions = [offset + i for offset, length in spans for i in range(length)]
+    project = bytes(vba_project[position] for position in positions)
+    out = bytearray(vba_project)
+    for match in re.finditer(rb"(?m)^DPB=", project):
+        out[positions[match.start() + 2]] = ord("X")
+    return bytes(out)
 
 
 def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
@@ -81,8 +99,7 @@ def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
                     zout.writestr(item.filename, text.encode(encoding))
 
                 elif item.filename == "xl/vbaProject.bin":
-                    new_content = content.replace(b"DPB=", b"DPX=")
-                    zout.writestr(item.filename, new_content)
+                    zout.writestr(item.filename, disable_vba_password(content))
 
                 else:
                     zout.writestr(item.filename, content)
