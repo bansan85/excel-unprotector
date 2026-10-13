@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import zipfile
 import re
 import warnings
@@ -19,6 +20,13 @@ def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
         r'\s+applyProtection="[^"]*"',
         r'\s+state="hidden"',
     ]
+
+    # Opening the output for writing would truncate the input while it is
+    # read. samefile compares the files themselves, so a path differing only
+    # by case on a case-insensitive file system, a symlink or a hard link to
+    # the input is caught too.
+    if os.path.exists(output_path) and os.path.samefile(input_path, output_path):
+        raise ValueError("The output file must not be the input file")
 
     with zipfile.ZipFile(input_path, "r") as zin:
         with zipfile.ZipFile(

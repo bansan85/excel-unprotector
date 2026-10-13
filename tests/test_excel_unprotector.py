@@ -4,6 +4,8 @@ from core.excel_unprotector import unprotect_xlsx
 from zipfile import ZipFile
 import hashlib
 import pathlib
+import shutil
+import tempfile
 
 
 class TestExcelUnprotect(unittest.TestCase):
@@ -56,6 +58,32 @@ class TestExcelUnprotect(unittest.TestCase):
                 f"{self.current_folder}/data/book1_unprotected_ref.xlsm",
             )
         )
+
+    def assert_refuses_same_file(self, input_file: str, output_file: str):
+        original = pathlib.Path(input_file).read_bytes()
+        with self.assertRaises(ValueError):
+            unprotect_xlsx(input_file, output_file)
+        self.assertEqual(pathlib.Path(input_file).read_bytes(), original)
+
+    def test_refuses_same_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = shutil.copy(self.input_file, f"{tmp}/book.xlsm")
+            self.assert_refuses_same_file(input_file, input_file)
+
+    def test_refuses_same_path_with_other_case(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = shutil.copy(self.input_file, f"{tmp}/book.xlsm")
+            output_file = f"{tmp}/BOOK.xlsm"
+            if not os.path.exists(output_file):
+                self.skipTest("case-sensitive file system")
+            self.assert_refuses_same_file(input_file, output_file)
+
+    def test_refuses_hard_link_to_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = shutil.copy(self.input_file, f"{tmp}/book.xlsm")
+            output_file = f"{tmp}/link.xlsm"
+            os.link(input_file, output_file)
+            self.assert_refuses_same_file(input_file, output_file)
 
 
 if __name__ == "__main__":
