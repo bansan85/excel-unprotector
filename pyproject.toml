@@ -24,6 +24,9 @@ dependencies = []
 [project.scripts]
 excel-unprotector = "main:main"
 
+[tool.setuptools]
+py-modules = ["main"]
+
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core*", "tests*"]
+include = ["core*"]
