@@ -1,7 +1,9 @@
 import unittest
 import pathlib
+import struct
 from zipfile import ZipFile
 from core.vba_grep import (
+    CompoundFile,
     VbaMatch,
     decompress,
     extract_vba_modules,
@@ -72,6 +74,23 @@ class TestVbaGrep(unittest.TestCase):
                 VbaMatch("Sheet1", 2, 'Protect "pwd"'),
             ],
         )
+
+    def test_cyclic_fat_chain(self):
+        with ZipFile(self.input_file, "r") as z:
+            data = bytearray(z.read("xl/vbaProject.bin"))
+        sector_size = 1 << struct.unpack_from("<H", data, 0x1E)[0]
+        dir_start = struct.unpack_from("<I", data, 0x30)[0]
+        first_fat_sector = struct.unpack_from("<I", data, 0x4C)[0]
+        # Link the first sector of the directory to itself
+        struct.pack_into(
+            "<I",
+            data,
+            (first_fat_sector + 1) * sector_size + 4 * dir_start,
+            dir_start,
+        )
+
+        with self.assertRaises(ValueError):
+            CompoundFile(bytes(data))
 
     def test_find_protect_calls(self):
         self.assertEqual(find_protect_calls(self.input_file), [])

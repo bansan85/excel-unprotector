@@ -54,6 +54,19 @@ def decompress(data: bytes) -> bytes:
     return bytes(out)
 
 
+def _follow(start: int, next_of) -> list[int]:
+    # A corrupted or crafted file can link a chain back on itself
+    indexes: list[int] = []
+    seen: set[int] = set()
+    while start < END_OF_CHAIN:
+        if start in seen:
+            raise ValueError("Cyclic sector chain in compound file")
+        seen.add(start)
+        indexes.append(start)
+        start = next_of(start)
+    return indexes
+
+
 class CompoundFile:
     # Minimal [MS-CFB] reader: only what is needed to read streams by name
     def __init__(self, data: bytes):
@@ -67,10 +80,13 @@ class CompoundFile:
         ints_per_sector = self.sector_size // 4
 
         difat = list(struct.unpack_from("<109I", data, 0x4C))
-        while difat_next < END_OF_CHAIN:
-            values = struct.unpack(f"<{ints_per_sector}I", self._sector(difat_next))
-            difat += values[:-1]
-            difat_next = values[-1]
+
+        def next_difat(index: int) -> int:
+            values = struct.unpack(f"<{ints_per_sector}I", self._sector(index))
+            difat.extend(values[:-1])
+            return values[-1]
+
+        _follow(difat_next, next_difat)
 
         self.fat: list[int] = []
         for sector in difat:
@@ -104,21 +120,18 @@ class CompoundFile:
         return self.data[offset : offset + self.sector_size]
 
     def _chain(self, start: int) -> bytes:
-        out = bytearray()
-        while start < END_OF_CHAIN:
-            out += self._sector(start)
-            start = self.fat[start]
-        return bytes(out)
+        return b"".join(
+            self._sector(i) for i in _follow(start, self.fat.__getitem__)
+        )
 
     def stream(self, name: str) -> bytes:
         start, size = self.streams[name.lower()]
         if size >= self.mini_cutoff:
             return self._chain(start)[:size]
         out = bytearray()
-        while start < END_OF_CHAIN:
-            offset = start * self.mini_sector_size
+        for i in _follow(start, self.minifat.__getitem__):
+            offset = i * self.mini_sector_size
             out += self.mini_stream[offset : offset + self.mini_sector_size]
-            start = self.minifat[start]
         return bytes(out[:size])
 
 
