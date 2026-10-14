@@ -58,6 +58,32 @@ class TestVbaGrep(unittest.TestCase):
             b"#aaabcdefaaaaghijaaaaaklaaamnopqaaaaaaaaaaaarstuvwxyzaaa",
         )
 
+    def test_decompress_rejects_invalid_signature(self):
+        # [MS-OVBA] 2.4.1.1.1: the SignatureByte is always 0x01
+        chunk = struct.pack("<H", 0x3FFF) + b"x" * 4096
+        with self.assertRaises(ValueError):
+            decompress(b"")
+        with self.assertRaises(ValueError):
+            decompress(b"\x00" + chunk)
+
+    def test_decompress_uncompressed_chunk(self):
+        # [MS-OVBA] 2.4.1.1.5: header 0x3FFF, compressed flag cleared, so the
+        # 4096 bytes after it are copied as is
+        data = bytes(range(256)) * 16
+        self.assertEqual(
+            decompress(b"\x01" + struct.pack("<H", 0x3FFF) + data), data
+        )
+        # The compressed chunk after it must start right after the 4096 bytes
+        compressed = b"\x00" + b"abcdefgh"  # flags 0x00: 8 literals
+        container = (
+            b"\x01"
+            + struct.pack("<H", 0x3FFF)
+            + data
+            + struct.pack("<H", 0xB000 | (len(compressed) - 1))
+            + compressed
+        )
+        self.assertEqual(decompress(container), data + b"abcdefgh")
+
     def test_extract_vba_modules(self):
         with ZipFile(self.input_file, "r") as z:
             modules = extract_vba_modules(z.read("xl/vbaProject.bin"))
