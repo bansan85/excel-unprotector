@@ -1,9 +1,18 @@
 import sys
 import os
+import io
 from core.excel_unprotector import unprotect_xlsx
 
 
 def main():
+    # A redirected stdout on Windows uses the ANSI code page, which lacks some
+    # characters, such as Cyrillic in a VBA line: print() would fail after the
+    # workbook is written. Escape them with backslashreplace, as stderr does,
+    # keeping the encoding. Only a TextIOWrapper has reconfigure: tests replace
+    # stdout with a StringIO.
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(errors="backslashreplace")
+
     import argparse
 
     parser = argparse.ArgumentParser(
