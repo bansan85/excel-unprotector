@@ -516,6 +516,32 @@ class TestExcelUnprotect(unittest.TestCase):
                     z.read("xl/vbaProject.bin"), truncated.replace(b"DPB=", b"DPX=")
                 )
 
+    def test_unscannable_vba_keeps_output(self):
+        sheet = '<worksheet><sheetProtection sheet="1"/><t>a</t></worksheet>'
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            write_package(input_file, {"xl/worksheets/sheet1.xml": sheet})
+
+            with mock.patch(
+                "excel_unprotector.unprotector.find_protect_calls",
+                side_effect=ValueError("boom"),
+            ) as scan:
+                with self.assertWarnsRegex(
+                    UserWarning, "Unable to scan VBA macros for Protect calls: boom"
+                ):
+                    matches = unprotect_xlsx(input_file, output_file)
+            scan.assert_called_once_with(output_file)
+
+            self.assertEqual(matches, [])
+            self.assertEqual(sorted(os.listdir(tmp)), ["in.xlsx", "out.xlsx"])
+            with ZipFile(output_file, "r") as z:
+                self.assertIsNone(z.testzip())
+                self.assertEqual(
+                    z.read("xl/worksheets/sheet1.xml").decode(),
+                    "<worksheet><t>a</t></worksheet>",
+                )
+
     def assert_refuses_same_file(self, input_file: str, output_file: str):
         original = pathlib.Path(input_file).read_bytes()
         with self.assertRaises(ValueError):
