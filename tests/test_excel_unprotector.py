@@ -142,6 +142,36 @@ class TestExcelUnprotect(unittest.TestCase):
                     '<sheetProtectionInfo a="1"/></x:worksheet>',
                 )
 
+    def test_removes_password_to_modify(self):
+        workbook = (
+            '<workbook><fileVersion appName="xl"/>'
+            '<fileSharing readOnlyRecommended="1" userName="u"'
+            ' reservationPassword="CC3D"/><workbookPr/></workbook>'
+        )
+        workbook2 = (
+            '<x:workbook xmlns:x="ns"><x:fileSharing userName="u" '
+            'algorithmName="SHA-512" hashValue="aGFzaA==" saltValue="c2FsdA==" '
+            'spinCount="100000"></x:fileSharing><x:workbookPr/></x:workbook>'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            with ZipFile(input_file, "w") as z:
+                z.writestr("xl/workbook.xml", workbook)
+                z.writestr("xl/workbook2.xml", workbook2)
+
+            unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(
+                    z.read("xl/workbook.xml").decode(),
+                    '<workbook><fileVersion appName="xl"/><workbookPr/></workbook>',
+                )
+                self.assertEqual(
+                    z.read("xl/workbook2.xml").decode(),
+                    '<x:workbook xmlns:x="ns"><x:workbookPr/></x:workbook>',
+                )
+
     def test_keeps_xml_encoding(self):
         xml = (
             '<?xml version="1.0" encoding="{}"?>'

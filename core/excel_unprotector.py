@@ -51,7 +51,13 @@ def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
     # <x:sheetProtection/>: the closing tag must then carry the same prefix.
     # Both <name/> and <name></name> are valid XML and used by writers.
     patterns_to_remove: list[str] = []
-    for name in ["sheetProtection", "workbookProtection", "protectedRanges"]:
+    for name in [
+        "sheetProtection",
+        "workbookProtection",
+        "protectedRanges",
+        # Holds the password to modify and the read-only recommendation
+        "fileSharing",
+    ]:
         patterns_to_remove += [
             rf"<(?:[\w.-]+:)?{name}(?:\s[^>]*)?/>",
             rf"<((?:[\w.-]+:)?){name}(?:\s[^>]*)?(?<!/)>.*?</\1{name}\s*>",
