@@ -127,6 +127,17 @@ class TestVbaGrep(unittest.TestCase):
         with self.assertRaises(ValueError):
             CompoundFile(bytes(data))
 
+    def test_truncated_stream(self):
+        with ZipFile(self.input_file, "r") as z:
+            data = z.read("xl/vbaProject.bin")
+        # Cut the file after the first byte of the last piece of PROJECT. The
+        # header, FAT and directory come before the cut: the file still parses.
+        offset, _ = CompoundFile(data).stream_spans("PROJECT")[-1]
+        cfb = CompoundFile(data[: offset + 1])
+
+        with self.assertRaises(ValueError):
+            cfb.stream_spans("PROJECT")
+
     def test_ignores_size_high_bits_in_version_3(self):
         with ZipFile(self.input_file, "r") as z:
             data = bytearray(z.read("xl/vbaProject.bin"))

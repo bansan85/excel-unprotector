@@ -182,6 +182,13 @@ class CompoundFile:
                 break
             spans.append((offset, length))
             size -= length
+        # A truncated file is missing the end of some streams: fail rather than
+        # return them cut short
+        for offset, length in spans:
+            if offset + length > len(self.data):
+                raise ValueError(
+                    f"Stream {path} goes past the end of the compound file"
+                )
         return spans
 
     def stream(self, path: str) -> bytes:

@@ -422,6 +422,33 @@ class TestExcelUnprotect(unittest.TestCase):
         self.assertIn(b"\r\nDPX=", cfb.stream("PROJECT"))
         self.assertNotIn(b"DPB=", cfb.stream("PROJECT"))
 
+    def test_truncated_vba_project(self):
+        with ZipFile(self.input_file, "r") as z:
+            parts = {name: z.read(name) for name in z.namelist()}
+        # Cut the file after the first byte of the last piece of PROJECT: the
+        # header, FAT and directory are kept, but the piece runs past the end
+        vba_project = parts["xl/vbaProject.bin"]
+        offset, _ = CompoundFile(vba_project).stream_spans("PROJECT")[-1]
+        truncated = vba_project[: offset + 1]
+        self.assertIn(b"DPB=", truncated)
+        parts["xl/vbaProject.bin"] = truncated
+
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsm"
+            output_file = f"{tmp}/out.xlsm"
+            with ZipFile(input_file, "w") as z:
+                for name, content in parts.items():
+                    z.writestr(name, content)
+
+            with self.assertWarns(UserWarning):
+                unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(set(z.namelist()), set(parts))
+                self.assertEqual(
+                    z.read("xl/vbaProject.bin"), truncated.replace(b"DPB=", b"DPX=")
+                )
+
     def assert_refuses_same_file(self, input_file: str, output_file: str):
         original = pathlib.Path(input_file).read_bytes()
         with self.assertRaises(ValueError):
