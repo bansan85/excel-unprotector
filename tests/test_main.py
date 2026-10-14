@@ -45,6 +45,35 @@ class TestMain(unittest.TestCase):
         # The first letter of "пароль" is escaped, not dropped or replaced
         self.assertIn(b"\\u043f", output)
 
+    def test_exits_when_input_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = pathlib.Path(tmp) / "missing.xlsm"
+            output_file = pathlib.Path(tmp) / "new.xlsm"
+            argv = ["excel-unprotector", str(input_file), str(output_file)]
+            stdout = StringIO()
+            with mock.patch("sys.argv", argv), redirect_stdout(stdout):
+                with self.assertRaises(SystemExit) as cm:
+                    cli.main()
+
+        self.assertEqual(cm.exception.code, 1)
+        self.assertEqual(stdout.getvalue(), f"Error: '{input_file}' is missing.\n")
+
+    def test_exits_when_input_is_not_a_zip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = pathlib.Path(tmp) / "not-a-workbook.xlsm"
+            input_file.write_bytes(b"not a zip file")
+            output_file = pathlib.Path(tmp) / "new.xlsm"
+            argv = ["excel-unprotector", str(input_file), str(output_file)]
+            stdout = StringIO()
+            with mock.patch("sys.argv", argv), redirect_stdout(stdout):
+                with self.assertRaises(SystemExit) as cm:
+                    cli.main()
+
+            self.assertFalse(output_file.exists())
+
+        self.assertEqual(cm.exception.code, 1)
+        self.assertTrue(stdout.getvalue().startswith("Unexpected exception: "))
+
     def test_runs_as_module(self):
         with tempfile.TemporaryDirectory() as tmp:
             output_file = pathlib.Path(tmp) / "new.xlsm"
