@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import re
 import struct
 import zipfile
@@ -198,6 +199,61 @@ class CompoundFile:
         )
 
 
+# Windows code pages that Python has under another name. Windows accepts any
+# cpNNNN name, other systems only the ones Python ships: this keeps the result
+# the same everywhere. The Mac code pages 10001 to 10008 are close variants of
+# these codecs.
+CODEPAGE_CODECS = {
+    10000: "mac_roman",
+    10001: "shift_jis",
+    10002: "big5",
+    10003: "euc_kr",
+    10004: "mac_arabic",
+    10006: "mac_greek",
+    10007: "mac_cyrillic",
+    10008: "gb2312",
+    10010: "mac_romanian",
+    10017: "mac_cyrillic",
+    10029: "mac_latin2",
+    10079: "mac_iceland",
+    10081: "mac_turkish",
+    10082: "mac_croatian",
+    20127: "ascii",
+    20866: "koi8_r",
+    20932: "euc_jp",
+    21866: "koi8_u",
+    28591: "latin_1",
+    28592: "iso8859_2",
+    28593: "iso8859_3",
+    28594: "iso8859_4",
+    28595: "iso8859_5",
+    28596: "iso8859_6",
+    28597: "iso8859_7",
+    28598: "iso8859_8",
+    28599: "iso8859_9",
+    28603: "iso8859_13",
+    28605: "iso8859_15",
+    50220: "iso2022_jp",
+    51932: "euc_jp",
+    51936: "gb2312",
+    51949: "euc_kr",
+    54936: "gb18030",
+    65001: "utf_8",
+}
+
+
+def codepage_codec(codepage: int) -> str:
+    if codepage in CODEPAGE_CODECS:
+        return CODEPAGE_CODECS[codepage]
+    try:
+        codecs.lookup(f"cp{codepage}")
+    except LookupError:
+        # VBA keywords, quotes and line breaks are ASCII: an unknown code page
+        # only garbles the other characters, instead of stopping the scan
+        return "latin_1"
+    return f"cp{codepage}"
+
+
 def extract_vba_modules(vba_project: bytes) -> list[tuple[str, str]]:
     cfb = CompoundFile(vba_project)
     dir_stream = decompress(cfb.stream("VBA/dir"))
@@ -216,12 +272,12 @@ def extract_vba_modules(vba_project: bytes) -> list[tuple[str, str]]:
         if record_id == 0x0003:
             codepage = struct.unpack_from("<H", record)[0]
         elif record_id == 0x001A:
-            stream_name = record.decode(f"cp{codepage}", errors="replace")
+            stream_name = record.decode(codepage_codec(codepage), errors="replace")
         elif record_id == 0x0031:
             text_offset = struct.unpack_from("<I", record)[0]
             source = decompress(cfb.stream(f"VBA/{stream_name}")[text_offset:])
             modules.append(
-                (stream_name, source.decode(f"cp{codepage}", errors="replace"))
+                (stream_name, source.decode(codepage_codec(codepage), errors="replace"))
             )
     return modules
 

@@ -2,9 +2,11 @@ import unittest
 import pathlib
 import struct
 from zipfile import ZipFile
+from unittest import mock
 from core.vba_grep import (
     CompoundFile,
     VbaMatch,
+    codepage_codec,
     decompress,
     extract_vba_modules,
     find_protect_calls,
@@ -64,6 +66,34 @@ class TestVbaGrep(unittest.TestCase):
             [name for name, _ in modules], ["Module1", "ThisWorkbook"]
         )
         self.assertIn("Sub Macro1()", modules[0][1])
+
+    def test_codepage_codec(self):
+        # Code page 10000 (Mac Roman) has another name in Python
+        self.assertEqual(codepage_codec(10000), "mac_roman")
+        self.assertEqual(b"\x8e".decode(codepage_codec(10000)), "é")
+        self.assertEqual(codepage_codec(1252), "cp1252")
+        self.assertEqual(b"\xe9".decode(codepage_codec(28591)), "é")
+        # No code page has this number, Windows included
+        self.assertEqual(codepage_codec(12345), "latin_1")
+
+    def test_extract_vba_modules_unknown_codepage(self):
+        with ZipFile(self.input_file, "r") as z:
+            vba_project = z.read("xl/vbaProject.bin")
+        # PROJECTCODEPAGE record (id 3, size 2): code page 1252, then 12345
+        cp1252 = b"\x03\x00\x02\x00\x00\x00\xe4\x04"
+        cp12345 = b"\x03\x00\x02\x00\x00\x00\x39\x30"
+        real_decompress = decompress
+        dir_stream = real_decompress(CompoundFile(vba_project).stream("VBA/dir"))
+        self.assertEqual(dir_stream.count(cp1252), 1)
+        expected = extract_vba_modules(vba_project)
+
+        def with_unknown_codepage(data: bytes) -> bytes:
+            return real_decompress(data).replace(cp1252, cp12345)
+
+        with mock.patch("core.vba_grep.decompress", side_effect=with_unknown_codepage):
+            modules = extract_vba_modules(vba_project)
+
+        self.assertEqual(modules, expected)
 
     def test_grep_protect_calls(self):
         modules = [
