@@ -393,6 +393,43 @@ class TestExcelUnprotect(unittest.TestCase):
                 self.assertEqual(z.read("customXml/item1.xml").decode(), custom)
                 self.assertEqual(z.read("docProps/custom.xml").decode(), props)
 
+    def test_ignores_elements_other_than_default_and_override(self):
+        content_types = (
+            f'<Types xmlns="{CONTENT_TYPES_NS}">'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            # Neither a Default nor an Override: its attributes must not count
+            # as either, or the XML parts below would become worksheets
+            '<Unknown Extension="xml" PartName="/docProps/custom.xml" '
+            f'ContentType="{WORKSHEET}"/>'
+            '<Override PartName="/xl/worksheets/sheet1.xml" '
+            f'ContentType="{WORKSHEET}"/>'
+            "</Types>"
+        )
+        sheet = '<worksheet><sheetProtection sheet="1"/></worksheet>'
+        custom = '<tasks><task name="x" state="hidden"/><sheetProtection/></tasks>'
+        props = '<Properties><property state="hidden"/></Properties>'
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            with ZipFile(input_file, "w") as z:
+                z.writestr("[Content_Types].xml", content_types)
+                z.writestr("xl/worksheets/sheet1.xml", sheet)
+                z.writestr("customXml/item1.xml", custom)
+                z.writestr("docProps/custom.xml", props)
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(
+                    z.read("xl/worksheets/sheet1.xml").decode(),
+                    "<worksheet></worksheet>",
+                )
+                self.assertEqual(z.read("customXml/item1.xml").decode(), custom)
+                self.assertEqual(z.read("docProps/custom.xml").decode(), props)
+        self.assertEqual(caught, [])
+
     def test_keeps_cdata_comments_and_processing_instructions(self):
         xml = (
             '<worksheet><!-- <sheetProtection/> <a state="hidden"/> -->'
