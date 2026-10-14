@@ -329,6 +329,29 @@ class TestVbaGrep(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Missing root entry"):
                     CompoundFile(bytes(data))
 
+    def test_cyclic_directory_tree(self):
+        with ZipFile(self.input_file, "r") as z:
+            original = z.read("xl/vbaProject.bin")
+        offsets = directory_entry_offsets(original)
+        # Entries: 1 is the VBA storage, its child 3 is ThisWorkbook, whose left
+        # sibling 2 is Module1; 7 is PROJECT, the child of the root entry
+        cases = {
+            # The child of the VBA storage is the storage itself
+            "child to self": (1, 76, 1),
+            # The right sibling of ThisWorkbook is PROJECT, already visited
+            "sibling to root child": (3, 72, 7),
+            # The right sibling of Module1 is its storage VBA
+            "sibling to ancestor": (2, 72, 1),
+        }
+        for case, (index, field, target) in cases.items():
+            with self.subTest(case):
+                data = bytearray(original)
+                struct.pack_into("<I", data, offsets[index] + field, target)
+                with self.assertRaisesRegex(
+                    ValueError, "Cyclic directory tree in compound file"
+                ):
+                    CompoundFile(bytes(data))
+
     def test_find_protect_calls(self):
         self.assertEqual(find_protect_calls(self.input_file), [])
 
