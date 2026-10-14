@@ -315,6 +315,20 @@ class TestVbaGrep(unittest.TestCase):
             extract_vba_modules(bytes(data)), extract_vba_modules(original.data)
         )
 
+    def test_first_entry_must_be_root_storage(self):
+        with ZipFile(self.input_file, "r") as z:
+            original = z.read("xl/vbaProject.bin")
+        # The first directory entry is the root storage, of object type 5
+        root_offset = directory_entry_offsets(original)[0]
+        self.assertEqual(original[root_offset + 66], 5)
+
+        for entry_type in (0, 1):
+            with self.subTest(entry_type=entry_type):
+                data = bytearray(original)
+                data[root_offset + 66] = entry_type
+                with self.assertRaisesRegex(ValueError, "Missing root entry"):
+                    CompoundFile(bytes(data))
+
     def test_find_protect_calls(self):
         self.assertEqual(find_protect_calls(self.input_file), [])
 
