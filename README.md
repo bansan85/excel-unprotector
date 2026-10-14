@@ -6,6 +6,8 @@ Unprotect your xlsx file (Excel) with this simple python script.
 
 `excel-unprotector input.xlsm output.xlsm`
 
+From the project folder, without installing it, the same works with `python -m excel_unprotector input.xlsm output.xlsm`.
+
 ## Caution
 
 It only works if your file is NOT protected for reading and ONLY for writing / editing. If your file is protected for reading, the content of the file is encrypted.

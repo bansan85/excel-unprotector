@@ -22,11 +22,7 @@ dependencies = []
 "Homepage" = "https://github.com/bansan85/excel-unprotector"
 
 [project.scripts]
-excel-unprotector = "main:main"
+excel-unprotector = "excel_unprotector.cli:main"
 
 [tool.setuptools]
-py-modules = ["main"]
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["core*"]
+packages = ["excel_unprotector"]

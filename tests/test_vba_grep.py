@@ -3,7 +3,7 @@ import pathlib
 import struct
 from zipfile import ZipFile
 from unittest import mock
-from core.vba_grep import (
+from excel_unprotector.vba_grep import (
     CompoundFile,
     VbaMatch,
     codepage_codec,
@@ -90,7 +90,9 @@ class TestVbaGrep(unittest.TestCase):
         def with_unknown_codepage(data: bytes) -> bytes:
             return real_decompress(data).replace(cp1252, cp12345)
 
-        with mock.patch("core.vba_grep.decompress", side_effect=with_unknown_codepage):
+        with mock.patch(
+            "excel_unprotector.vba_grep.decompress", side_effect=with_unknown_codepage
+        ):
             modules = extract_vba_modules(vba_project)
 
         self.assertEqual(modules, expected)

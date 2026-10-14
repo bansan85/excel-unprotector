@@ -7,7 +7,7 @@ import re
 import secrets
 import warnings
 from xml.etree import ElementTree
-from core.vba_grep import CompoundFile, VbaMatch, find_protect_calls
+from excel_unprotector.vba_grep import CompoundFile, VbaMatch, find_protect_calls
 
 # A start or empty-element tag. Text content cannot contain "<" unescaped, so
 # this never matches inside a cell value or a shared string.

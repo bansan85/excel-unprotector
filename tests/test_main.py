@@ -1,13 +1,15 @@
 import unittest
 import pathlib
+import subprocess
+import sys
 import tempfile
 import zipfile
 from contextlib import redirect_stdout
 from io import BytesIO, StringIO, TextIOWrapper
 from unittest import mock
 
-import main
-from core.vba_grep import VbaMatch
+from excel_unprotector import cli
+from excel_unprotector.vba_grep import VbaMatch
 
 
 class TestMain(unittest.TestCase):
@@ -20,7 +22,7 @@ class TestMain(unittest.TestCase):
             output_file = pathlib.Path(tmp) / "new.xlsm"
             argv = ["excel-unprotector", self.input_file, str(output_file)]
             with mock.patch("sys.argv", argv), redirect_stdout(StringIO()):
-                main.main()
+                cli.main()
 
             self.assertTrue(zipfile.is_zipfile(output_file))
 
@@ -32,14 +34,34 @@ class TestMain(unittest.TestCase):
             output_file = pathlib.Path(tmp) / "new.xlsm"
             argv = ["excel-unprotector", self.input_file, str(output_file)]
             with mock.patch("sys.stdout", stdout), mock.patch("sys.argv", argv):
-                with mock.patch("main.unprotect_xlsx", return_value=[match]):
-                    main.main()
+                with mock.patch(
+                    "excel_unprotector.cli.unprotect_xlsx", return_value=[match]
+                ):
+                    cli.main()
             stdout.flush()
 
         output = stdout.buffer.getvalue()
         self.assertIn(b"Module1:3:", output)
         # The first letter of "пароль" is escaped, not dropped or replaced
         self.assertIn(b"\\u043f", output)
+
+    def test_runs_as_module(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_file = pathlib.Path(tmp) / "new.xlsm"
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "excel_unprotector",
+                    self.input_file,
+                    str(output_file),
+                ],
+                cwd=self.current_folder.parent,
+                check=True,
+                capture_output=True,
+            )
+
+            self.assertTrue(zipfile.is_zipfile(output_file))
 
 
 if __name__ == "__main__":

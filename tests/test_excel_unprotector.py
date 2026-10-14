@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 import os
-from core.excel_unprotector import unprotect_xlsx
-from core.vba_grep import CompoundFile
+from excel_unprotector.unprotector import unprotect_xlsx
+from excel_unprotector.vba_grep import CompoundFile
 from zipfile import ZipFile, is_zipfile
 import codecs
 import hashlib
@@ -482,7 +482,7 @@ class TestExcelUnprotect(unittest.TestCase):
             pathlib.Path(output_file).write_bytes(b"previous")
 
             with mock.patch(
-                "core.excel_unprotector.disable_vba_password",
+                "excel_unprotector.unprotector.disable_vba_password",
                 side_effect=RuntimeError("boom"),
             ):
                 with self.assertRaises(RuntimeError):

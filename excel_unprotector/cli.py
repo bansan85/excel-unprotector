@@ -1,7 +1,7 @@
 import sys
 import os
 import io
-from core.excel_unprotector import unprotect_xlsx
+from excel_unprotector.unprotector import unprotect_xlsx
 
 
 def main():
@@ -42,7 +42,3 @@ def main():
         )
         for call in protect_calls:
             print(f"  {call.module}:{call.line_number}: {call.line}")
-
-
-if __name__ == "__main__":
-    main()
