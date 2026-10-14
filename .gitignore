@@ -2,4 +2,4 @@ __pycache__/
 *.py[cod]
 .venv/
 .env
-tests/data/*_unprotected.xlsx
+tests/data/*_unprotected.xls[xm]

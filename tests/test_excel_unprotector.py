@@ -40,7 +40,6 @@ class TestExcelUnprotect(unittest.TestCase):
     def setUp(self):
         self.current_folder = pathlib.Path(__file__).parent.resolve()
         self.input_file = f"{self.current_folder}/data/book1.xlsm"
-        self.output_file = f"{self.current_folder}/data/book1_unprotected.xlsm"
 
     @staticmethod
     def get_zip_inventory(zip_path: str):
@@ -77,15 +76,21 @@ class TestExcelUnprotect(unittest.TestCase):
         return True
 
     def test_integrity(self):
-        self.assertEqual(unprotect_xlsx(self.input_file, self.output_file), [])
+        data_folder = f"{self.current_folder}/data"
+        before = sorted(os.listdir(data_folder))
+        with tempfile.TemporaryDirectory() as tmp:
+            output_file = f"{tmp}/out.xlsm"
+            self.assertEqual(unprotect_xlsx(self.input_file, output_file), [])
 
-        self.assertFalse(self.compare_xlsx_content(self.input_file, self.output_file))
-        self.assertTrue(
-            self.compare_xlsx_content(
-                self.output_file,
-                f"{self.current_folder}/data/book1_unprotected_ref.xlsm",
+            self.assertFalse(self.compare_xlsx_content(self.input_file, output_file))
+            self.assertTrue(
+                self.compare_xlsx_content(
+                    output_file,
+                    f"{self.current_folder}/data/book1_unprotected_ref.xlsm",
+                )
             )
-        )
+        # Nothing else may be written into the sample data folder
+        self.assertEqual(sorted(os.listdir(data_folder)), before)
 
     def test_keeps_text_content(self):
         xml = (
