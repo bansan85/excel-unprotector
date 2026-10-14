@@ -491,6 +491,23 @@ class TestVbaGrep(unittest.TestCase):
             [((i + 3) * 512, 512) for i in range(9)] + [(12 * 512, 392)],
         )
 
+    def test_sector_chain_longer_than_size(self):
+        # Big has 10 sectors, but its size field is lowered to 9 sectors: the
+        # last sector of the chain is spare and must not be read
+        content = random.Random(0).randbytes(5000)
+        data = bytearray(build_compound_file({"Big": content}))
+        offset = directory_entry_offsets(bytes(data))[1]
+        self.assertEqual(struct.unpack_from("<I", data, offset + 120)[0], 5000)
+        struct.pack_into("<I", data, offset + 120, 4608)
+
+        cfb = CompoundFile(bytes(data))
+        self.assertEqual(cfb.stream("Big"), content[:4608])
+        # Sectors 2 to 10 hold the stream, sector 11 is not in any span
+        self.assertEqual(
+            cfb.stream_spans("Big"),
+            [((i + 3) * 512, 512) for i in range(9)],
+        )
+
     def test_find_protect_calls(self):
         self.assertEqual(find_protect_calls(self.input_file), [])
 
