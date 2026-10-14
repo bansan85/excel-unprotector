@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,12 +7,12 @@ name = "excel-unprotector"
 version = "0.0.1"
 description = "Tool for unprotecting XLSX files through XML and binary manipulation"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
+license = "MIT"
 authors = [{ name = "Vincent Le Garrec", email = "github@le-garrec.fr" }]
 keywords = ["excel", "xlsx", "xml", "unprotect", "vba"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Utilities",
 ]
