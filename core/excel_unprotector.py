@@ -11,7 +11,11 @@ from core.vba_grep import CompoundFile, VbaMatch, find_protect_calls
 # this never matches inside a cell value or a shared string.
 TAG_PATTERN = re.compile(r"<[A-Za-z_][^\"'>]*(?:(?:\"[^\"]*\"|'[^']*')[^\"'>]*)*>")
 
-ENCODING_PATTERN = re.compile(rb"<\?xml[^>]*encoding=[\"']([A-Za-z0-9._-]+)")
+# One attribute, with the whitespace in front of it. XML allows both quote
+# characters and whitespace around "=".
+ATTRIBUTE_PATTERN = re.compile(r"""\s+([\w.:-]+)\s*=\s*("[^"]*"|'[^']*')""")
+
+ENCODING_PATTERN = re.compile(rb"<\?xml[^>]*encoding\s*=\s*[\"']([A-Za-z0-9._-]+)")
 
 
 def xml_encoding(content: bytes) -> str:
@@ -63,19 +67,20 @@ def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
             rf"<((?:[\w.-]+:)?){name}(?:\s[^>]*)?(?<!/)>.*?</\1{name}\s*>",
         ]
 
-    # Shows hidden and very hidden sheets. Excel cannot unhide a very hidden
-    # sheet from its interface, only a macro can.
-    attrs_to_remove = [
-        r'\s+windowProtection="[^"]*"',
-        r'\s+applyProtection="[^"]*"',
-        r'\s+state="(?:hidden|veryHidden)"',
-    ]
+    def remove_attr(attr: re.Match) -> str:
+        name, value = attr.group(1), attr.group(2)[1:-1]
+        if name in ("windowProtection", "applyProtection"):
+            return ""
+        # Shows hidden and very hidden sheets. Excel cannot unhide a very hidden
+        # sheet from its interface, only a macro can.
+        if name == "state" and value in ("hidden", "veryHidden"):
+            return ""
+        return attr.group(0)
 
     def remove_attrs(tag: re.Match) -> str:
-        text = tag.group(0)
-        for attr_pattern in attrs_to_remove:
-            text = re.sub(attr_pattern, "", text)
-        return text
+        # Each match covers a whole attribute, value included, so text inside
+        # a value is never taken for an attribute.
+        return ATTRIBUTE_PATTERN.sub(remove_attr, tag.group(0))
 
     # Opening the output for writing would truncate the input while it is
     # read. samefile compares the files themselves, so a path differing only

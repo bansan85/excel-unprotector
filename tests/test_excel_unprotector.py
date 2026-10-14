@@ -8,6 +8,7 @@ import hashlib
 import pathlib
 import shutil
 import tempfile
+import warnings
 
 
 class TestExcelUnprotect(unittest.TestCase):
@@ -108,6 +109,32 @@ class TestExcelUnprotect(unittest.TestCase):
                     '<sheet name="c" sheetId="3" state="visible"/>'
                     "</sheets></workbook>",
                 )
+
+    def test_removes_attributes_in_any_quoting(self):
+        workbook = (
+            "<workbook><sheets><sheet name='a' state='hidden'/>"
+            '<sheet name="b" state = "veryHidden"/></sheets>'
+            "<bookViews><workbookView windowProtection = '1'/></bookViews>"
+            '<definedNames><definedName comment=\' state="hidden" \' name="n">'
+            "A1</definedName></definedNames></workbook>"
+        )
+        expected = (
+            "<workbook><sheets><sheet name='a'/>"
+            '<sheet name="b"/></sheets>'
+            "<bookViews><workbookView/></bookViews>"
+            '<definedNames><definedName comment=\' state="hidden" \' name="n">'
+            "A1</definedName></definedNames></workbook>"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            with ZipFile(input_file, "w") as z:
+                z.writestr("xl/workbook.xml", workbook)
+
+            unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(z.read("xl/workbook.xml").decode(), expected)
 
     def test_removes_prefixed_elements(self):
         workbook = (
@@ -233,6 +260,31 @@ class TestExcelUnprotect(unittest.TestCase):
                     z.read("latin1.xml"),
                     expected.format("ISO-8859-1").encode("latin-1"),
                 )
+
+    def test_keeps_xml_encoding_with_spaces(self):
+        xml = (
+            "<?xml version=\"1.0\" encoding = 'ISO-8859-1'?>"
+            '<worksheet><sheetProtection sheet="1"/><t>é</t></worksheet>'
+        )
+        expected = (
+            "<?xml version=\"1.0\" encoding = 'ISO-8859-1'?>"
+            "<worksheet><t>é</t></worksheet>"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            with ZipFile(input_file, "w") as z:
+                z.writestr("xl/worksheets/sheet1.xml", xml.encode("latin-1"))
+
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(
+                    z.read("xl/worksheets/sheet1.xml"), expected.encode("latin-1")
+                )
+        self.assertEqual(caught, [])
 
     def test_keeps_undecodable_xml_unchanged(self):
         content = b'<worksheet><sheetProtection sheet="1"/><t>\xff</t></worksheet>'
