@@ -315,6 +315,30 @@ class TestExcelUnprotect(unittest.TestCase):
                 )
         self.assertEqual(caught, [])
 
+    def test_keeps_utf8_byte_order_mark(self):
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<worksheet><sheetProtection sheet="1"/><t>café</t></worksheet>'
+        )
+        expected = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<worksheet><t>café</t></worksheet>"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            write_package(
+                input_file,
+                {"xl/worksheets/sheet1.xml": codecs.BOM_UTF8 + xml.encode("utf-8")},
+            )
+
+            unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                content = z.read("xl/worksheets/sheet1.xml")
+        self.assertTrue(content.startswith(codecs.BOM_UTF8))
+        self.assertEqual(content, codecs.BOM_UTF8 + expected.encode("utf-8"))
+
     def test_keeps_undecodable_xml_unchanged(self):
         content = b'<worksheet><sheetProtection sheet="1"/><t>\xff</t></worksheet>'
         with tempfile.TemporaryDirectory() as tmp:
