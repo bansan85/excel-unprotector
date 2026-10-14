@@ -26,6 +26,29 @@ def directory_entry_offsets(data: bytes) -> list[int]:
     return offsets
 
 
+def move_last_fat_sector_to_difat(data: bytearray) -> int:
+    # Move the last FAT sector index of the header into a DIFAT sector appended
+    # at the end of the file, chained from header 0x44. Returns its index.
+    sector_size = 1 << struct.unpack_from("<H", data, 0x1E)[0]
+    last_slot = max(
+        slot
+        for slot in range(109)
+        if struct.unpack_from("<I", data, 0x4C + 4 * slot)[0] < 0xFFFFFFFA
+    )
+    fat_sector = struct.unpack_from("<I", data, 0x4C + 4 * last_slot)[0]
+    struct.pack_into("<I", data, 0x4C + 4 * last_slot, 0xFFFFFFFF)
+
+    # Sector i starts at (i + 1) * sector_size, the header being sector -1
+    new_index = len(data) // sector_size - 1
+    values = [0xFFFFFFFF] * (sector_size // 4)
+    values[0] = fat_sector
+    values[-1] = 0xFFFFFFFE  # ENDOFCHAIN: this is the last DIFAT sector
+    data += struct.pack(f"<{len(values)}I", *values)
+    struct.pack_into("<I", data, 0x44, new_index)
+    struct.pack_into("<I", data, 0x48, 1)
+    return new_index
+
+
 class TestVbaGrep(unittest.TestCase):
     def setUp(self):
         self.current_folder = pathlib.Path(__file__).parent.resolve()
@@ -214,6 +237,37 @@ class TestVbaGrep(unittest.TestCase):
         )
 
         with self.assertRaises(ValueError):
+            CompoundFile(bytes(data))
+
+    def test_difat_chain(self):
+        # [MS-CFB] 2.5: the FAT sector indexes past the 109 in the header are in
+        # the DIFAT sectors chained from header 0x44
+        with ZipFile(self.input_file, "r") as z:
+            original = z.read("xl/vbaProject.bin")
+        data = bytearray(original)
+        difat_index = move_last_fat_sector_to_difat(data)
+        self.assertEqual(struct.unpack_from("<I", data, 0x44)[0], difat_index)
+
+        cfb = CompoundFile(bytes(data))
+        expected = CompoundFile(original)
+        self.assertEqual(cfb.fat, expected.fat)
+        self.assertEqual(cfb.streams, expected.streams)
+        self.assertEqual(cfb.stream("PROJECT"), expected.stream("PROJECT"))
+        self.assertEqual(
+            extract_vba_modules(bytes(data)), extract_vba_modules(original)
+        )
+
+    def test_cyclic_difat_chain(self):
+        with ZipFile(self.input_file, "r") as z:
+            data = bytearray(z.read("xl/vbaProject.bin"))
+        sector_size = 1 << struct.unpack_from("<H", data, 0x1E)[0]
+        difat_index = move_last_fat_sector_to_difat(data)
+        # Link the DIFAT sector to itself through its last slot
+        struct.pack_into(
+            "<I", data, (difat_index + 1) * sector_size + sector_size - 4, difat_index
+        )
+
+        with self.assertRaisesRegex(ValueError, "Cyclic sector chain"):
             CompoundFile(bytes(data))
 
     def test_truncated_stream(self):
