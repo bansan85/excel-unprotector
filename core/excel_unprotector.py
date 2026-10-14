@@ -5,17 +5,31 @@ import os
 import zipfile
 import re
 import warnings
+from xml.etree import ElementTree
 from core.vba_grep import CompoundFile, VbaMatch, find_protect_calls
 
 # A start or empty-element tag. Text content cannot contain "<" unescaped, so
 # this never matches inside a cell value or a shared string.
 TAG_PATTERN = re.compile(r"<[A-Za-z_][^\"'>]*(?:(?:\"[^\"]*\"|'[^']*')[^\"'>]*)*>")
 
+# CDATA sections, comments and processing instructions may hold any text, even
+# something that looks like a tag: they are kept as they are. Each pattern
+# tries this alternative first, so a match cannot start inside one of them.
+UNPARSED = r"(?P<unparsed><!\[CDATA\[.*?\]\]>|<!--.*?-->|<\?.*?\?>)"
+
 # One attribute, with the whitespace in front of it. XML allows both quote
 # characters and whitespace around "=".
 ATTRIBUTE_PATTERN = re.compile(r"""\s+([\w.:-]+)\s*=\s*("[^"]*"|'[^']*')""")
 
 ENCODING_PATTERN = re.compile(rb"<\?xml[^>]*encoding\s*=\s*[\"']([A-Za-z0-9._-]+)")
+
+# Content types of the SpreadsheetML parts (workbook, sheets, styles...): they
+# end with "+xml". The second prefix covers macro-enabled workbooks, macro
+# sheets and the parts added by later Excel versions (slicers, timelines).
+SPREADSHEET_TYPES = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.",
+    "application/vnd.ms-excel.",
+)
 
 
 def xml_encoding(content: bytes) -> str:
@@ -50,6 +64,40 @@ def disable_vba_password(vba_project: bytes) -> bytes:
     return bytes(out)
 
 
+def spreadsheet_parts(zin: zipfile.ZipFile) -> set[str]:
+    # Custom XML and document properties are not spreadsheet markup, so they
+    # are left alone. [OPC] A part takes the content type of its Override, else
+    # the one of the Default for its extension.
+    try:
+        types = ElementTree.fromstring(zin.read("[Content_Types].xml"))
+    except (KeyError, ElementTree.ParseError) as e:
+        warnings.warn(
+            f"Unable to read [Content_Types].xml, every XML part is processed: {e}"
+        )
+        return {name for name in zin.namelist() if name.lower().endswith(".xml")}
+
+    defaults: dict[str, str] = {}
+    overrides: dict[str, str] = {}
+    for element in types:
+        kind = element.tag.rsplit("}", 1)[-1]
+        if kind == "Default":
+            key = element.get("Extension", "").lower()
+            defaults[key] = element.get("ContentType", "")
+        elif kind == "Override":
+            key = element.get("PartName", "").lower()
+            overrides[key] = element.get("ContentType", "")
+
+    parts: set[str] = set()
+    for name in zin.namelist():
+        extension = os.path.splitext(name)[1][1:].lower()
+        declared = overrides.get(f"/{name}".lower(), defaults.get(extension, ""))
+        # Media types are case-insensitive [RFC 6838]
+        content_type = declared.lower()
+        if content_type.startswith(SPREADSHEET_TYPES) and content_type.endswith("+xml"):
+            parts.add(name)
+    return parts
+
+
 def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
     # Some writers put the elements in a prefixed namespace, such as
     # <x:sheetProtection/>: the closing tag must then carry the same prefix.
@@ -64,8 +112,19 @@ def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
     ]:
         patterns_to_remove += [
             rf"<(?:[\w.-]+:)?{name}(?:\s[^>]*)?/>",
-            rf"<((?:[\w.-]+:)?){name}(?:\s[^>]*)?(?<!/)>.*?</\1{name}\s*>",
+            rf"<(?P<prefix>(?:[\w.-]+:)?){name}(?:\s[^>]*)?(?<!/)>.*?"
+            rf"</(?P=prefix){name}\s*>",
         ]
+
+    removal_patterns = [
+        re.compile(f"{UNPARSED}|{pattern}", re.DOTALL) for pattern in patterns_to_remove
+    ]
+    tag_pattern = re.compile(f"{UNPARSED}|{TAG_PATTERN.pattern}", re.DOTALL)
+
+    def remove_element(match: re.Match) -> str:
+        if match.group("unparsed") is not None:
+            return match.group(0)
+        return ""
 
     def remove_attr(attr: re.Match) -> str:
         name, value = attr.group(1), attr.group(2)[1:-1]
@@ -78,6 +137,8 @@ def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
         return attr.group(0)
 
     def remove_attrs(tag: re.Match) -> str:
+        if tag.group("unparsed") is not None:
+            return tag.group(0)
         # Each match covers a whole attribute, value included, so text inside
         # a value is never taken for an attribute.
         return ATTRIBUTE_PATTERN.sub(remove_attr, tag.group(0))
@@ -90,13 +151,14 @@ def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
         raise ValueError("The output file must not be the input file")
 
     with zipfile.ZipFile(input_path, "r") as zin:
+        parts = spreadsheet_parts(zin)
         with zipfile.ZipFile(
             output_path, "w", compression=zipfile.ZIP_DEFLATED
         ) as zout:
             for item in zin.infolist():
                 content = zin.read(item.filename)
 
-                if item.filename.endswith(".xml"):
+                if item.filename in parts:
                     encoding = xml_encoding(content)
                     try:
                         text = content.decode(encoding)
@@ -105,10 +167,10 @@ def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
                         zout.writestr(item.filename, content)
                         continue
 
-                    for pattern in patterns_to_remove:
-                        text = re.sub(pattern, "", text, flags=re.DOTALL)
+                    for removal in removal_patterns:
+                        text = removal.sub(remove_element, text)
 
-                    text = TAG_PATTERN.sub(remove_attrs, text)
+                    text = tag_pattern.sub(remove_attrs, text)
 
                     zout.writestr(item.filename, text.encode(encoding))
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import unittest
 import os
 from core.excel_unprotector import unprotect_xlsx
@@ -9,6 +11,28 @@ import pathlib
 import shutil
 import tempfile
 import warnings
+
+CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+WORKSHEET = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
+
+
+def write_package(
+    path: str,
+    parts: dict[str, str | bytes],
+    content_types: dict[str, str] | None = None,
+):
+    # Each part gets an Override: a worksheet unless content_types says otherwise
+    content_types = content_types or {}
+    overrides = "".join(
+        f'<Override PartName="/{name}" '
+        f'ContentType="{content_types.get(name, WORKSHEET)}"/>'
+        for name in parts
+    )
+    types = f'<Types xmlns="{CONTENT_TYPES_NS}">{overrides}</Types>'
+    with ZipFile(path, "w") as z:
+        z.writestr("[Content_Types].xml", types)
+        for name, content in parts.items():
+            z.writestr(name, content)
 
 
 class TestExcelUnprotect(unittest.TestCase):
@@ -71,8 +95,7 @@ class TestExcelUnprotect(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_file = f"{tmp}/in.xlsx"
             output_file = f"{tmp}/out.xlsx"
-            with ZipFile(input_file, "w") as z:
-                z.writestr("xl/workbook.xml", xml)
+            write_package(input_file, {"xl/workbook.xml": xml})
 
             unprotect_xlsx(input_file, output_file)
 
@@ -95,8 +118,7 @@ class TestExcelUnprotect(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_file = f"{tmp}/in.xlsx"
             output_file = f"{tmp}/out.xlsx"
-            with ZipFile(input_file, "w") as z:
-                z.writestr("xl/workbook.xml", workbook)
+            write_package(input_file, {"xl/workbook.xml": workbook})
 
             unprotect_xlsx(input_file, output_file)
 
@@ -128,8 +150,7 @@ class TestExcelUnprotect(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_file = f"{tmp}/in.xlsx"
             output_file = f"{tmp}/out.xlsx"
-            with ZipFile(input_file, "w") as z:
-                z.writestr("xl/workbook.xml", workbook)
+            write_package(input_file, {"xl/workbook.xml": workbook})
 
             unprotect_xlsx(input_file, output_file)
 
@@ -149,9 +170,10 @@ class TestExcelUnprotect(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_file = f"{tmp}/in.xlsx"
             output_file = f"{tmp}/out.xlsx"
-            with ZipFile(input_file, "w") as z:
-                z.writestr("xl/workbook.xml", workbook)
-                z.writestr("xl/worksheets/sheet1.xml", sheet)
+            write_package(
+                input_file,
+                {"xl/workbook.xml": workbook, "xl/worksheets/sheet1.xml": sheet},
+            )
 
             unprotect_xlsx(input_file, output_file)
 
@@ -178,9 +200,10 @@ class TestExcelUnprotect(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_file = f"{tmp}/in.xlsx"
             output_file = f"{tmp}/out.xlsx"
-            with ZipFile(input_file, "w") as z:
-                z.writestr("xl/workbook.xml", workbook)
-                z.writestr("xl/worksheets/sheet1.xml", sheet)
+            write_package(
+                input_file,
+                {"xl/workbook.xml": workbook, "xl/worksheets/sheet1.xml": sheet},
+            )
 
             unprotect_xlsx(input_file, output_file)
 
@@ -209,9 +232,10 @@ class TestExcelUnprotect(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_file = f"{tmp}/in.xlsx"
             output_file = f"{tmp}/out.xlsx"
-            with ZipFile(input_file, "w") as z:
-                z.writestr("xl/workbook.xml", workbook)
-                z.writestr("xl/workbook2.xml", workbook2)
+            write_package(
+                input_file,
+                {"xl/workbook.xml": workbook, "xl/workbook2.xml": workbook2},
+            )
 
             unprotect_xlsx(input_file, output_file)
 
@@ -240,9 +264,7 @@ class TestExcelUnprotect(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_file = f"{tmp}/in.xlsx"
             output_file = f"{tmp}/out.xlsx"
-            with ZipFile(input_file, "w") as z:
-                for name, content in parts.items():
-                    z.writestr(name, content)
+            write_package(input_file, parts)
 
             unprotect_xlsx(input_file, output_file)
 
@@ -273,8 +295,9 @@ class TestExcelUnprotect(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_file = f"{tmp}/in.xlsx"
             output_file = f"{tmp}/out.xlsx"
-            with ZipFile(input_file, "w") as z:
-                z.writestr("xl/worksheets/sheet1.xml", xml.encode("latin-1"))
+            write_package(
+                input_file, {"xl/worksheets/sheet1.xml": xml.encode("latin-1")}
+            )
 
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
@@ -291,14 +314,89 @@ class TestExcelUnprotect(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             input_file = f"{tmp}/in.xlsx"
             output_file = f"{tmp}/out.xlsx"
-            with ZipFile(input_file, "w") as z:
-                z.writestr("xl/worksheets/sheet1.xml", content)
+            write_package(input_file, {"xl/worksheets/sheet1.xml": content})
 
             with self.assertWarns(UserWarning):
                 unprotect_xlsx(input_file, output_file)
 
             with ZipFile(output_file, "r") as z:
                 self.assertEqual(z.read("xl/worksheets/sheet1.xml"), content)
+
+    def test_processes_only_spreadsheet_parts(self):
+        content_types = (
+            f'<Types xmlns="{CONTENT_TYPES_NS}">'
+            '<Default Extension="xml" ContentType="application/xml"/>'
+            f'<Default Extension="SHEET" ContentType="{WORKSHEET.upper()}"/>'
+            '<Override PartName="/XL/Worksheets/Sheet1.xml" '
+            f'ContentType="{WORKSHEET}"/>'
+            '<Override PartName="/docProps/custom.xml" ContentType="application/'
+            'vnd.openxmlformats-officedocument.custom-properties+xml"/>'
+            "</Types>"
+        )
+        sheet = '<worksheet><sheetProtection sheet="1"/></worksheet>'
+        custom = '<tasks><task name="x" state="hidden"/><sheetProtection/></tasks>'
+        props = '<Properties><property state="hidden"/></Properties>'
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            with ZipFile(input_file, "w") as z:
+                z.writestr("[Content_Types].xml", content_types)
+                # Matched by its Override, although the case differs
+                z.writestr("xl/worksheets/sheet1.xml", sheet)
+                # Matched by the Default of its extension, although the case
+                # differs in the extension and in the content type
+                z.writestr("xl/worksheets/sheet2.sheet", sheet)
+                z.writestr("customXml/item1.xml", custom)
+                z.writestr("docProps/custom.xml", props)
+
+            unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(
+                    z.read("xl/worksheets/sheet1.xml").decode(),
+                    "<worksheet></worksheet>",
+                )
+                self.assertEqual(
+                    z.read("xl/worksheets/sheet2.sheet").decode(),
+                    "<worksheet></worksheet>",
+                )
+                self.assertEqual(z.read("customXml/item1.xml").decode(), custom)
+                self.assertEqual(z.read("docProps/custom.xml").decode(), props)
+
+    def test_keeps_cdata_comments_and_processing_instructions(self):
+        xml = (
+            '<worksheet><!-- <sheetProtection/> <a state="hidden"/> -->'
+            '<?pi <sheetProtection/>?><sheetProtection sheet="1"/>'
+            '<t><![CDATA[<sheetProtection/><b state="hidden"/>]]></t></worksheet>'
+        )
+        expected = (
+            '<worksheet><!-- <sheetProtection/> <a state="hidden"/> -->'
+            "<?pi <sheetProtection/>?>"
+            '<t><![CDATA[<sheetProtection/><b state="hidden"/>]]></t></worksheet>'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            write_package(input_file, {"xl/worksheets/sheet1.xml": xml})
+
+            unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(z.read("xl/worksheets/sheet1.xml").decode(), expected)
+
+    def test_processes_all_xml_without_content_types(self):
+        sheet = '<worksheet><sheetProtection sheet="1"/></worksheet>'
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            with ZipFile(input_file, "w") as z:
+                z.writestr("a.xml", sheet)
+
+            with self.assertWarns(UserWarning):
+                unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(z.read("a.xml").decode(), "<worksheet></worksheet>")
 
     def test_patches_only_project_password(self):
         with ZipFile(self.input_file, "r") as z:
