@@ -4,13 +4,14 @@ import unittest
 import os
 from core.excel_unprotector import unprotect_xlsx
 from core.vba_grep import CompoundFile
-from zipfile import ZipFile
+from zipfile import ZipFile, is_zipfile
 import codecs
 import hashlib
 import pathlib
 import shutil
 import tempfile
 import warnings
+from unittest import mock
 
 CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 WORKSHEET = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
@@ -474,6 +475,46 @@ class TestExcelUnprotect(unittest.TestCase):
             output_file = f"{tmp}/link.xlsm"
             os.link(input_file, output_file)
             self.assert_refuses_same_file(input_file, output_file)
+
+    def test_failure_keeps_existing_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_file = f"{tmp}/out.xlsm"
+            pathlib.Path(output_file).write_bytes(b"previous")
+
+            with mock.patch(
+                "core.excel_unprotector.disable_vba_password",
+                side_effect=RuntimeError("boom"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    unprotect_xlsx(self.input_file, output_file)
+
+            self.assertEqual(pathlib.Path(output_file).read_bytes(), b"previous")
+            self.assertEqual(os.listdir(tmp), ["out.xlsm"])
+
+    def test_success_leaves_no_temporary_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_file = f"{tmp}/out.xlsm"
+
+            unprotect_xlsx(self.input_file, output_file)
+
+            self.assertEqual(os.listdir(tmp), ["out.xlsm"])
+            self.assertTrue(is_zipfile(output_file))
+
+    def test_writes_through_symlinked_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real_file = f"{tmp}/real.xlsm"
+            link_file = f"{tmp}/link.xlsm"
+            pathlib.Path(real_file).write_bytes(b"previous")
+            try:
+                os.symlink(real_file, link_file)
+            except OSError:
+                self.skipTest("symbolic links need a privilege on Windows")
+
+            unprotect_xlsx(self.input_file, link_file)
+
+            self.assertTrue(os.path.islink(link_file))
+            self.assertTrue(is_zipfile(real_file))
+            self.assertEqual(sorted(os.listdir(tmp)), ["link.xlsm", "real.xlsm"])
 
 
 if __name__ == "__main__":

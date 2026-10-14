@@ -4,6 +4,7 @@ import codecs
 import os
 import zipfile
 import re
+import secrets
 import warnings
 from xml.etree import ElementTree
 from core.vba_grep import CompoundFile, VbaMatch, find_protect_calls
@@ -143,42 +144,66 @@ def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
         # a value is never taken for an attribute.
         return ATTRIBUTE_PATTERN.sub(remove_attr, tag.group(0))
 
-    # Opening the output for writing would truncate the input while it is
-    # read. samefile compares the files themselves, so a path differing only
-    # by case on a case-insensitive file system, a symlink or a hard link to
-    # the input is caught too.
+    # The output replaces the file at output_path: if that is the input, the
+    # original workbook would be lost. samefile compares the files themselves,
+    # so a path differing only by case on a case-insensitive file system, a
+    # symlink or a hard link to the input is caught too.
     if os.path.exists(output_path) and os.path.samefile(input_path, output_path):
         raise ValueError("The output file must not be the input file")
 
+    # Writing the output in place would leave a partial zip there on failure,
+    # and lose its previous content. The zip is written beside it and moved over
+    # it once complete. realpath follows a symbolic link: the link is kept and
+    # its target is replaced.
+    target = os.path.realpath(output_path)
+    temp_path = os.path.join(
+        os.path.dirname(target),
+        f".{os.path.basename(target)}.{secrets.token_hex(8)}.tmp",
+    )
+
     with zipfile.ZipFile(input_path, "r") as zin:
         parts = spreadsheet_parts(zin)
-        with zipfile.ZipFile(
-            output_path, "w", compression=zipfile.ZIP_DEFLATED
-        ) as zout:
-            for item in zin.infolist():
-                content = zin.read(item.filename)
+        # Opened after the input, so that an input that is not a zip creates
+        # nothing. Outside the try, so that a file already under that name is
+        # not removed.
+        temp_file = open(temp_path, "xb")
+        try:
+            with temp_file:
+                with zipfile.ZipFile(
+                    temp_file, "w", compression=zipfile.ZIP_DEFLATED
+                ) as zout:
+                    for item in zin.infolist():
+                        content = zin.read(item.filename)
 
-                if item.filename in parts:
-                    encoding = xml_encoding(content)
-                    try:
-                        text = content.decode(encoding)
-                    except (LookupError, UnicodeDecodeError) as e:
-                        warnings.warn(f"{item.filename} left unchanged: {e}")
-                        zout.writestr(item.filename, content)
-                        continue
+                        if item.filename in parts:
+                            encoding = xml_encoding(content)
+                            try:
+                                text = content.decode(encoding)
+                            except (LookupError, UnicodeDecodeError) as e:
+                                warnings.warn(f"{item.filename} left unchanged: {e}")
+                                zout.writestr(item.filename, content)
+                                continue
 
-                    for removal in removal_patterns:
-                        text = removal.sub(remove_element, text)
+                            for removal in removal_patterns:
+                                text = removal.sub(remove_element, text)
 
-                    text = tag_pattern.sub(remove_attrs, text)
+                            text = tag_pattern.sub(remove_attrs, text)
 
-                    zout.writestr(item.filename, text.encode(encoding))
+                            zout.writestr(item.filename, text.encode(encoding))
 
-                elif item.filename == "xl/vbaProject.bin":
-                    zout.writestr(item.filename, disable_vba_password(content))
+                        elif item.filename == "xl/vbaProject.bin":
+                            zout.writestr(item.filename, disable_vba_password(content))
 
-                else:
-                    zout.writestr(item.filename, content)
+                        else:
+                            zout.writestr(item.filename, content)
+            os.replace(temp_path, target)
+        except BaseException:
+            # BaseException, so that Ctrl+C removes the temporary file too
+            try:
+                os.remove(temp_path)
+            except FileNotFoundError:
+                pass
+            raise
 
     # The conversion is done: a macro that cannot be parsed must not fail it.
     try:
