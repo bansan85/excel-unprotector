@@ -63,10 +63,12 @@ def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
             rf"<((?:[\w.-]+:)?){name}(?:\s[^>]*)?(?<!/)>.*?</\1{name}\s*>",
         ]
 
+    # Shows hidden and very hidden sheets. Excel cannot unhide a very hidden
+    # sheet from its interface, only a macro can.
     attrs_to_remove = [
         r'\s+windowProtection="[^"]*"',
         r'\s+applyProtection="[^"]*"',
-        r'\s+state="hidden"',
+        r'\s+state="(?:hidden|veryHidden)"',
     ]
 
     def remove_attrs(tag: re.Match) -> str:

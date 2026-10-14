@@ -83,6 +83,32 @@ class TestExcelUnprotect(unittest.TestCase):
                     '<t>x state="hidden" applyProtection="1" y</t></workbook>',
                 )
 
+    def test_shows_very_hidden_sheets(self):
+        workbook = (
+            "<workbook><sheets>"
+            '<sheet name="a" sheetId="1" state="veryHidden"/>'
+            '<sheet name="b" sheetId="2" state="hidden"/>'
+            '<sheet name="c" sheetId="3" state="visible"/>'
+            "</sheets></workbook>"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            with ZipFile(input_file, "w") as z:
+                z.writestr("xl/workbook.xml", workbook)
+
+            unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(
+                    z.read("xl/workbook.xml").decode(),
+                    "<workbook><sheets>"
+                    '<sheet name="a" sheetId="1"/>'
+                    '<sheet name="b" sheetId="2"/>'
+                    '<sheet name="c" sheetId="3" state="visible"/>'
+                    "</sheets></workbook>",
+                )
+
     def test_removes_prefixed_elements(self):
         workbook = (
             '<x:workbook xmlns:x="ns"><x:workbookProtection lockStructure="1"/>'
