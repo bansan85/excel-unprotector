@@ -112,6 +112,36 @@ class TestExcelUnprotect(unittest.TestCase):
                     '<x:worksheet xmlns:x="ns"></x:worksheet>',
                 )
 
+    def test_removes_elements_with_end_tag(self):
+        workbook = (
+            '<workbook><workbookProtection lockStructure="1"></workbookProtection>'
+            "<sheets/></workbook>"
+        )
+        sheet = (
+            '<x:worksheet xmlns:x="ns"><x:sheetProtection sheet="1" password="CC3D">'
+            '</x:sheetProtection ><x:sheetData/><sheetProtectionInfo a="1"/>'
+            "</x:worksheet>"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            input_file = f"{tmp}/in.xlsx"
+            output_file = f"{tmp}/out.xlsx"
+            with ZipFile(input_file, "w") as z:
+                z.writestr("xl/workbook.xml", workbook)
+                z.writestr("xl/worksheets/sheet1.xml", sheet)
+
+            unprotect_xlsx(input_file, output_file)
+
+            with ZipFile(output_file, "r") as z:
+                self.assertEqual(
+                    z.read("xl/workbook.xml").decode(),
+                    "<workbook><sheets/></workbook>",
+                )
+                self.assertEqual(
+                    z.read("xl/worksheets/sheet1.xml").decode(),
+                    '<x:worksheet xmlns:x="ns"><x:sheetData/>'
+                    '<sheetProtectionInfo a="1"/></x:worksheet>',
+                )
+
     def test_keeps_xml_encoding(self):
         xml = (
             '<?xml version="1.0" encoding="{}"?>'

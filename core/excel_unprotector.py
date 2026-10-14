@@ -49,12 +49,13 @@ def disable_vba_password(vba_project: bytes) -> bytes:
 def unprotect_xlsx(input_path: str, output_path: str) -> list[VbaMatch]:
     # Some writers put the elements in a prefixed namespace, such as
     # <x:sheetProtection/>: the closing tag must then carry the same prefix.
-    patterns_to_remove = [
-        r"<(?:[\w.-]+:)?sheetProtection[^>]*/>",
-        r"<(?:[\w.-]+:)?workbookProtection[^>]*/>",
-        r"<(?:[\w.-]+:)?protectedRanges[^>]*/>",
-        r"<((?:[\w.-]+:)?)protectedRanges[^>]*>.*?</\1protectedRanges>",
-    ]
+    # Both <name/> and <name></name> are valid XML and used by writers.
+    patterns_to_remove: list[str] = []
+    for name in ["sheetProtection", "workbookProtection", "protectedRanges"]:
+        patterns_to_remove += [
+            rf"<(?:[\w.-]+:)?{name}(?:\s[^>]*)?/>",
+            rf"<((?:[\w.-]+:)?){name}(?:\s[^>]*)?(?<!/)>.*?</\1{name}\s*>",
+        ]
 
     attrs_to_remove = [
         r'\s+windowProtection="[^"]*"',
