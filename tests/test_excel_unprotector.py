@@ -583,6 +583,28 @@ class TestExcelUnprotect(unittest.TestCase):
             self.assertEqual(pathlib.Path(output_file).read_bytes(), b"previous")
             self.assertEqual(os.listdir(tmp), ["out.xlsm"])
 
+    def test_missing_temporary_file_keeps_original_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output_file = f"{tmp}/out.xlsm"
+            pathlib.Path(output_file).write_bytes(b"previous")
+
+            def replace_and_lose_temporary(source, target):
+                # The temporary file is already gone when the cleanup runs
+                os.remove(source)
+                raise OSError("replace failed")
+
+            with mock.patch(
+                "excel_unprotector.unprotector.os.replace",
+                side_effect=replace_and_lose_temporary,
+            ):
+                with self.assertRaises(OSError) as caught:
+                    unprotect_xlsx(self.input_file, output_file)
+
+            self.assertIs(type(caught.exception), OSError)
+            self.assertEqual(str(caught.exception), "replace failed")
+            self.assertEqual(pathlib.Path(output_file).read_bytes(), b"previous")
+            self.assertEqual(os.listdir(tmp), ["out.xlsm"])
+
     def test_success_leaves_no_temporary_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             output_file = f"{tmp}/out.xlsm"
