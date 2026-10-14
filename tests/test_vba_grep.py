@@ -402,6 +402,24 @@ class TestVbaGrep(unittest.TestCase):
             extract_vba_modules(bytes(data)), extract_vba_modules(original)
         )
 
+    def test_keeps_size_high_bits_in_version_4(self):
+        # [MS-CFB] 2.6.3: the high 32 bits of the size are only ignored in
+        # version 3, where 4096-byte sectors are not allowed
+        content = random.Random(0).randbytes(5000)
+        data = bytearray(build_compound_file({"Big": content}, major_version=4))
+        self.assertEqual(struct.unpack_from("<H", data, 0x1A)[0], 4)
+        cfb = CompoundFile(bytes(data))
+        self.assertEqual(cfb.sector_size, 4096)
+        self.assertEqual(cfb.stream("Big"), content)
+
+        # Fill the high 32 bits of every directory entry's stream size
+        start, size = cfb.streams["big"]
+        for offset in directory_entry_offsets(bytes(data)):
+            struct.pack_into("<I", data, offset + 124, 0xDEADBEEF)
+
+        cfb = CompoundFile(bytes(data))
+        self.assertEqual(cfb.streams["big"], (start, (0xDEADBEEF << 32) | size))
+
     def test_same_stream_name_in_other_storage(self):
         with ZipFile(self.input_file, "r") as z:
             data = bytearray(z.read("xl/vbaProject.bin"))
