@@ -140,6 +140,37 @@ class TestVbaGrep(unittest.TestCase):
             ],
         )
 
+    def test_grep_line_numbers_match_vba_editor(self):
+        # The editor hides the Attribute lines and does not break lines at form
+        # feeds: the numbers must be those of the lines it shows
+        source = "\r\n".join(
+            [
+                'Attribute VB_Name = "Sheet1"',
+                'Attribute VB_Base = "0{00020820-0000-0000-C000-000000000046}"',
+                "Attribute VB_GlobalNameSpace = False",
+                "Sub Lock()",
+                'Attribute Lock.VB_ProcData.VB_Invoke_Func = " \\n14"',
+                "    ' form feed \x0c in a comment",
+                "    ActiveSheet.Protect",
+                "End Sub",
+                "Sub Protect()",
+                'Attribute Protect.VB_Description = "Locks"',
+                "End Sub",
+                "' comment going on _",
+                "Attribute is a word of the comment here",
+                "Protect",
+            ]
+        )
+
+        self.assertEqual(
+            grep_vba_modules([("Sheet1", source)]),
+            [
+                VbaMatch("Sheet1", 3, "ActiveSheet.Protect"),
+                VbaMatch("Sheet1", 5, "Sub Protect()"),
+                VbaMatch("Sheet1", 9, "Protect"),
+            ],
+        )
+
     def test_cyclic_fat_chain(self):
         with ZipFile(self.input_file, "r") as z:
             data = bytearray(z.read("xl/vbaProject.bin"))

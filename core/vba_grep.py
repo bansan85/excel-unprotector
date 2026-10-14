@@ -19,6 +19,10 @@ STRING_OR_COMMENT = re.compile(
 )
 
 
+# Matches an Attribute line, such as Attribute VB_Name = "Module1"
+ATTRIBUTE_LINE = re.compile(r"Attribute\s", re.IGNORECASE)
+
+
 @dataclass(frozen=True)
 class VbaMatch:
     module: str
@@ -302,8 +306,15 @@ def grep_vba_modules(
     matches: list[VbaMatch] = []
     for module_name, source in modules:
         in_comment = False
-        for line_number, line in enumerate(source.splitlines(), 1):
+        line_number = 0
+        # The VBA editor breaks lines at CR LF, CR and LF only, not at form feeds
+        for line in re.split(r"\r\n|\r|\n", source):
             code = line.strip()
+            # The VBA editor hides the Attribute lines, so they are neither
+            # numbered nor searched, unless they continue a comment
+            if not in_comment and ATTRIBUTE_LINE.match(code):
+                continue
+            line_number += 1
             if in_comment:
                 searched, comment = "", code
             else:
