@@ -1,5 +1,6 @@
 import unittest
 import pathlib
+import random
 import struct
 from zipfile import ZipFile
 from unittest import mock
@@ -47,6 +48,113 @@ def move_last_fat_sector_to_difat(data: bytearray) -> int:
     struct.pack_into("<I", data, 0x44, new_index)
     struct.pack_into("<I", data, 0x48, 1)
     return new_index
+
+
+ENDOFCHAIN = 0xFFFFFFFE
+FREESECT = 0xFFFFFFFF
+FATSECT = 0xFFFFFFFD
+NOSTREAM = 0xFFFFFFFF
+
+
+def make_directory_entry(
+    name: str,
+    kind: int,
+    black: bool,
+    left: int,
+    right: int,
+    child: int,
+    start: int,
+    size: int,
+) -> bytes:
+    # [MS-CFB] 2.6.1: a 128-byte directory entry
+    entry = bytearray(128)
+    if name:
+        encoded = (name + "\0").encode("utf-16-le")
+        entry[: len(encoded)] = encoded
+        struct.pack_into("<H", entry, 64, len(encoded))
+    entry[66] = kind
+    entry[67] = 1 if black else 0
+    struct.pack_into("<3I", entry, 68, left, right, child)
+    struct.pack_into("<IQ", entry, 116, start, size)
+    return bytes(entry)
+
+
+def build_compound_file(streams: dict[str, bytes], major_version: int = 3) -> bytes:
+    # Minimal [MS-CFB] file: one FAT sector, one directory sector, no mini
+    # stream and no mini FAT. Each stream is at least 4096 bytes, so it is in
+    # regular sectors. The streams are the children of the root entry, in a
+    # red-black tree: up to 3 streams fit, the middle name being the black
+    # child and the other ones red.
+    assert 1 <= len(streams) <= 3
+    assert all(len(content) >= 4096 for content in streams.values())
+    shift = 9 if major_version == 3 else 12
+    sector_size = 1 << shift
+    ints_per_sector = sector_size // 4
+
+    # Sector 0 is the FAT, sector 1 the directory, then the streams in order
+    fat = [FREESECT] * ints_per_sector
+    fat[0] = FATSECT
+    fat[1] = ENDOFCHAIN
+    starts: dict[str, int] = {}
+    sector = 2
+    for name, content in streams.items():
+        count = (len(content) + sector_size - 1) // sector_size
+        starts[name] = sector
+        fat[sector : sector + count] = range(sector + 1, sector + count + 1)
+        fat[sector + count - 1] = ENDOFCHAIN
+        sector += count
+    assert sector <= ints_per_sector, "the streams must fit in one FAT sector"
+
+    # Entry 0 is the root, entries 1 to n the streams sorted by name length
+    # then name, as [MS-CFB] 2.6.4 orders the siblings
+    names = sorted(streams, key=lambda name: (len(name), name.upper()))
+    root_child = (len(names) + 1) // 2
+    entries = [
+        make_directory_entry(
+            "Root Entry", 5, True, NOSTREAM, NOSTREAM, root_child, ENDOFCHAIN, 0
+        )
+    ]
+    for index, name in enumerate(names, start=1):
+        left = right = NOSTREAM
+        black = index == root_child
+        if black:
+            left = index - 1 if index > 1 else NOSTREAM
+            right = index + 1 if index < len(names) else NOSTREAM
+        entries.append(
+            make_directory_entry(
+                name,
+                2,
+                black,
+                left,
+                right,
+                NOSTREAM,
+                starts[name],
+                len(streams[name]),
+            )
+        )
+    unused = make_directory_entry("", 0, True, NOSTREAM, NOSTREAM, NOSTREAM, 0, 0)
+    entries += [unused] * (sector_size // 128 - len(entries))
+
+    header = bytearray(sector_size)
+    header[:8] = bytes.fromhex("D0CF11E0A1B11AE1")
+    # Minor version 0x3E, major version, byte order 0xFFFE, sector shift and
+    # mini sector shift 6
+    struct.pack_into("<5H", header, 0x18, 0x3E, major_version, 0xFFFE, shift, 6)
+    struct.pack_into("<I", header, 0x28, 0 if major_version == 3 else 1)
+    struct.pack_into("<I", header, 0x2C, 1)  # FAT sectors
+    struct.pack_into("<I", header, 0x30, 1)  # first directory sector
+    struct.pack_into("<I", header, 0x38, 4096)  # mini stream cutoff
+    struct.pack_into("<I", header, 0x3C, ENDOFCHAIN)  # no mini FAT
+    struct.pack_into("<I", header, 0x44, ENDOFCHAIN)  # no DIFAT sector
+    difat = [0] + [FREESECT] * 108
+    struct.pack_into("<109I", header, 0x4C, *difat)
+
+    data = bytearray(header)
+    data += struct.pack(f"<{ints_per_sector}I", *fat)
+    data += b"".join(entries)
+    for content in streams.values():
+        data += content + b"\0" * (-len(content) % sector_size)
+    return bytes(data)
 
 
 class TestVbaGrep(unittest.TestCase):
@@ -351,6 +459,19 @@ class TestVbaGrep(unittest.TestCase):
                     ValueError, "Cyclic directory tree in compound file"
                 ):
                     CompoundFile(bytes(data))
+
+    def test_stream_in_regular_sectors(self):
+        # [MS-CFB] 2.6.1: a stream of at least 4096 bytes is in regular sectors,
+        # here through the FAT since the file has no mini FAT
+        content = random.Random(0).randbytes(5000)
+        cfb = CompoundFile(build_compound_file({"Big": content}))
+        self.assertEqual(cfb.minifat, [])
+        self.assertEqual(cfb.stream("Big"), content)
+        # Sectors 2 to 11 hold the stream, the last one only 392 bytes
+        self.assertEqual(
+            cfb.stream_spans("Big"),
+            [((i + 3) * 512, 512) for i in range(9)] + [(12 * 512, 392)],
+        )
 
     def test_find_protect_calls(self):
         self.assertEqual(find_protect_calls(self.input_file), [])
